@@ -25,3 +25,35 @@ test('bounded finalization wait resolves success, times out or propagates a real
   assert.equal(await within(new Promise(() => {}), 5), false);
   await assert.rejects(within(Promise.reject(new Error('synthetic failure')), 50), /synthetic/);
 });
+
+test('blocked audio startup times out and releases microphone before a session can start', async () => {
+  const names = ['navigator', 'window', 'MediaRecorder', 'AudioContext', 'AudioWorkletNode'] as const;
+  const originals = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  let stopped = 0; let closed = 0;
+  const track = { stop: () => { stopped++; }, addEventListener() {} };
+  class Context {
+    state = 'suspended'; sampleRate = 48000;
+    audioWorklet = { addModule: async () => {} };
+    resume() { return new Promise<void>(() => {}); }
+    async close() { closed++; }
+  }
+  class Worklet { port = { onmessage: undefined, close() {} }; disconnect() {} }
+  try {
+    const mocks = {
+      navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track] }) } },
+      window: { AudioWorkletNode: Worklet, MediaRecorder: {} },
+      AudioContext: Context, AudioWorkletNode: Worklet,
+      MediaRecorder: { isTypeSupported: () => true },
+    };
+    for (const name of names) Object.defineProperty(globalThis, name, { value: mocks[name], configurable: true });
+    const capture = new Capture(options());
+    await assert.rejects(capture.prepare(), /Click Start session/);
+    assert.equal(stopped, 1); assert.equal(closed, 1);
+  } finally {
+    for (const name of names) {
+      const descriptor = originals.get(name);
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+});

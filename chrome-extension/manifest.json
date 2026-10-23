@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "ClearScribe Quick Start",
+  "version": "0.1.0",
+  "description": "Open your local ClearScribe page and start recording with a global keyboard shortcut.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "Open ClearScribe and start recording" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "content_scripts": [{ "matches": ["http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_idle" }],
+  "commands": {
+    "start-session": {
+      "suggested_key": { "default": "Ctrl+Shift+9" },
+      "description": "Open ClearScribe and start recording",
+      "global": true
+    }
+  }
+}

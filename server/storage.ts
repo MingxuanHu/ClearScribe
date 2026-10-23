@@ -23,13 +23,18 @@ export async function validateFolder(folder: string, project: string) {
   return selected;
 }
 export async function chooseFolder(): Promise<string | null> {
-  if (process.platform !== 'darwin') throw new Error('Native folder selection requires macOS.');
+  if (!['darwin', 'win32'].includes(process.platform)) throw new Error('Native folder selection requires macOS or Windows.');
   try {
+    if (process.platform === 'win32') {
+      const script = '$ErrorActionPreference = "Stop"; Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description = "Choose a ClearScribe save folder outside all Git projects"; try { if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write($dialog.SelectedPath) } } finally { $dialog.Dispose() }';
+      const { stdout } = await exec('powershell.exe', ['-NoProfile', '-STA', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { timeout: 120000, maxBuffer: 8192, windowsHide: true });
+      return stdout.trim() || null;
+    }
     const { stdout } = await exec('/usr/bin/osascript', ['-e', 'POSIX path of (choose folder with prompt "Choose a ClearScribe save folder outside all Git projects")'], { timeout: 120000, maxBuffer: 8192 });
     return stdout.trim();
   } catch (e) {
     if (String((e as { stderr?: string }).stderr).includes('(-128)')) return null;
-    throw new Error('Folder picker failed. Allow the native macOS dialog and try again.');
+    throw new Error('Folder picker failed. Allow the native folder dialog and try again.');
   }
 }
 export function basename(date: Date) {

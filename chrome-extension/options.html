@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>ClearScribe Quick Start settings</title></head>
+<body>
+  <h1>ClearScribe Quick Start</h1>
+  <form id="settings">
+    <label for="url">Local ClearScribe URL</label>
+    <input id="url" type="url" size="40" required placeholder="http://127.0.0.1:4317/">
+    <button type="submit">Save</button>
+  </form>
+  <p>Built app: http://127.0.0.1:4317/ · Development: http://127.0.0.1:5173/</p>
+  <button id="shortcuts">Customize keyboard shortcut</button>
+  <p>Set the shortcut scope to Global to use it from other apps. Chrome and the local service must be running.</p>
+  <p>Click the extension toolbar icon to open ClearScribe and start, too. Complete microphone and save-folder setup on first use.</p>
+  <p id="status" role="status"></p>
+  <script type="module" src="options.js"></script>
+</body></html>

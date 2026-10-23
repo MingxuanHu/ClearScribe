@@ -19,3 +19,17 @@ Use macOS and current Chrome, a locally configured key, an explicitly selected e
 - [ ] Run at least **one hour**, crossing the 50-minute session rotation. Watch RAM, disk writes, CPU, queue behavior and continuity. Confirm no background silent termination. Four-hour safety/transcript limits should be tested separately if relevant.
 - [ ] Compare caption latency/resource use with the recording path enabled and with it disabled in a controlled development instrumentation branch (the shipped UI requires recording for the normal two-file workflow). Record first-character latency, final-text latency and network RTT separately. Do not invent numbers or claim recording has no cost.
 - [ ] Inspect local logs, public assets, staged files and history with secret scanning. Manually review that screenshots and text are synthetic. Complete the README publication checklist before pushing.
+
+## Persistent settings and Chrome Quick Start (macOS and Windows)
+
+These are manual acceptance checks; automated mocks do not establish actual browser/OS behavior.
+
+- Choose an output folder; stop the service and restart with `npm start`. Verify the folder is restored, including after a machine reboot. Repeat in development mode. Confirm no recording resumes by itself.
+- Cancel the folder picker and verify the selection stays unchanged. On Windows, verify the native dialog opens, supports a Unicode path, and cancellation returns without an error.
+- Disconnect the selected external drive (or remove write permission), restart, and verify an actionable warning and disabled Start. Reconnect and restart; verify recovery. Corrupt settings in a temporary `CLEARSCRIBE_CONFIG_DIR` and verify recovery by choosing a new folder.
+- Load the unpacked Chrome extension per README, configure the correct local URL, and assign a Global shortcut. After extension reload, refresh the app tab.
+- From a different app, with no ClearScribe tab open, press the shortcut. Verify a new tab and foreground browser window, one new session, microphone level, incremental live captions, and a playable recording/TXT pair after Stop. Repeat with an already-open idle tab and with a minimized browser window.
+- Verify first-use microphone/OS permissions and Chrome audio-start restrictions show clear instructions, without claiming Listening or opening an upstream session while audio startup is blocked. Click Start to complete setup, stop, close the tab, and retry the shortcut.
+- Press the shortcut repeatedly while connecting, recording and finishing. Verify the active session and output pair are preserved. Open two app tabs and verify the extension does not start a second call when another page owns the session.
+- Stop the local service and press the shortcut. Verify the extension badge/hover error (or the page's backend-unavailable message in development mode). Restore the service and retry.
+- Test both `4317` built mode and `5173` development mode, a custom port, a shortcut conflict, and Chrome fully quit. Confirm plain navigation/reload never starts a session.

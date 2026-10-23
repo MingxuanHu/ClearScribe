@@ -7,12 +7,23 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { ModelCatalog, compatible, parseSettings } from './models.js';
 import { chooseFolder, validateFolder, CallFiles, MIME_EXTENSIONS } from './storage.js';
 import { equal, localRequest, safeError } from './security.js';
+import { readSettings, writeSettings } from './settings.js';
 import { CallSession, ConnectionError, type UpstreamFactory } from './session.js';
-export interface AppOptions { port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; upstream?: UpstreamFactory; request?: typeof fetch }
+export interface AppOptions { settingsFile?: string; port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; upstream?: UpstreamFactory; request?: typeof fetch }
 export function createApp(options: AppOptions) {
   const token = randomBytes(32).toString('hex');
   const catalog = new ModelCatalog(options.key, options.request);
   let folder: { id: string; path: string } | undefined;
+  let settingsWarning: string | undefined;
+  const restored = (async () => {
+    if (!options.settingsFile) return;
+    try {
+      const saved = await readSettings(options.settingsFile);
+      if (saved) folder = { id: randomBytes(16).toString('hex'), path: await validateFolder(saved.saveFolder, options.project) };
+    } catch {
+      settingsWarning = 'Saved settings or save folder are unavailable. Reconnect the drive and restart, or choose a writable save folder again.';
+    }
+  })();
   let picking = false;
   let active: CallSession | undefined;
   let owner: WebSocket | undefined;
@@ -31,9 +42,10 @@ export function createApp(options: AppOptions) {
     if (!localRequest(req, options.port, options.devPort)) { json(res, 403, { error: 'Untrusted local origin or Host.' }); return; }
     const url = new URL(req.url || '/', `http://127.0.0.1:${options.port}`);
     try {
+      await restored;
       if (url.pathname === '/api/bootstrap' && req.method === 'GET') {
         res.setHeader('Set-Cookie', `cs_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
-        json(res, 200, { token, keyConfigured: !!options.key, folder, files: active?.files.info() || lastFiles?.info(), active: !!active && active.phase !== 'stopped', platform: process.platform }); return;
+        json(res, 200, { token, keyConfigured: !!options.key, folder, files: active?.files.info() || lastFiles?.info(), active: !!active && active.phase !== 'stopped', platform: process.platform, settingsWarning }); return;
       }
       if (url.pathname.startsWith('/api/')) {
         if (!authenticated(req) || (req.method !== 'GET' && !equal(String(req.headers['x-csrf-token'] || ''), token))) { json(res, 403, { error: 'Reload the local app to establish a trusted session.' }); return; }
@@ -43,7 +55,15 @@ export function createApp(options: AppOptions) {
           picking = true;
           try {
             const selected = await (options.picker || chooseFolder)();
-            if (selected) folder = { id: randomBytes(16).toString('hex'), path: await validateFolder(selected, options.project) };
+            if (selected) {
+              const selectedPath = await validateFolder(selected, options.project);
+              if (options.settingsFile) {
+                try { await writeSettings(options.settingsFile, { version: 1, saveFolder: selectedPath }); }
+                catch { json(res, 500, { error: 'Could not save settings. Check permissions and free space in the configuration directory (or CLEARSCRIBE_CONFIG_DIR), then choose the folder again. The previous selection was kept.' }); return; }
+              }
+              folder = { id: randomBytes(16).toString('hex'), path: selectedPath };
+              settingsWarning = undefined;
+            }
             json(res, 200, { folder, cancelled: !selected });
           } catch (e) { json(res, 400, { error: (e as Error).message.startsWith('Choose ') ? (e as Error).message : safeError(e) }); }
           finally { picking = false; }
