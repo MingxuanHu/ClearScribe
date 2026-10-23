@@ -56,6 +56,10 @@ export class Capture {
         this.options.onLevel(Math.min(1, rms * 8), this.segmenter.position);
         if (turn) this.options.onAudio({ audio: base64PCM(turn.pcm), begin: turn.begin, end: turn.end, startSample: turn.startSample });
       };
+      // Verify browser audio permission before opening a paid upstream session.
+      if (!await within(this.context.resume(), 2500) || this.context.state !== 'running') {
+        throw new Error('Chrome blocked audio startup. Click Start session on this page to allow recording, then retry the shortcut.');
+      }
       this.source = this.context.createMediaStreamSource(this.stream);
       // Connect only on confirmed readiness; no recording or upstream samples during Connecting.
       this.stream.getTracks().forEach(track => track.addEventListener('ended', () => {
@@ -69,7 +73,7 @@ export class Capture {
     this.recorder = new MediaRecorder(this.stream, { mimeType: this.mime, audioBitsPerSecond: 64000 });
     this.recorder.ondataavailable = event => this.enqueue(event.data);
     this.recorder.onerror = () => { this.recordingFailed = true; this.options.onWarning('Recording encoder failed. Captions can continue; audio will remain incomplete.'); };
-    await this.context.resume();
+    if (!await within(this.context.resume(), 2500) || this.context.state !== 'running') throw new Error('Chrome blocked audio startup. Click Start session to retry.');
     this.enabled = true;
     this.recorder.start(1000);
     this.source.connect(this.node);

@@ -22,7 +22,7 @@ This is a working implementation with offline mock coverage, **not a claim of me
 
 ## Quick start
 
-**Requirements:** macOS, a current desktop Chrome, Node.js **22.12 or newer** (Node 24 recommended), npm, Internet access and an OpenAI API key with transcription access. The native folder picker currently requires macOS. Chrome is the intended primary audio environment; this delivery did not run real Chrome microphone/API acceptance.
+**Requirements:** macOS or Windows, a current desktop Chrome, Node.js **22.12 or newer** (Node 24 recommended), npm, Internet access and an OpenAI API key with transcription access. Native folder selection supports macOS and Windows (Windows PowerShell with Windows Forms). Linux is not yet a supported recording environment. Chrome is the intended primary audio environment; this delivery did not run real Chrome microphone/API acceptance.
 
 Replace `<repository-url>` with the actual repository URL after the owner publishes it:
 
@@ -52,6 +52,46 @@ Open **[http://127.0.0.1:4317](http://127.0.0.1:4317)**. The backend serves only
 
 The code is free and open source. **OpenAI API usage is billed separately; ChatGPT Plus does not include API usage.** Consult [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and your API billing settings. No fixed price is asserted here.
 
+## Remembered save folder
+
+Choosing a folder saves its canonical absolute path immediately to a local `settings.json` file. The next `npm start` or `npm run dev` restores it, including after reboot. Default locations:
+
+| Platform | Settings file |
+| --- | --- |
+| macOS | `~/Library/Application Support/ClearScribe/settings.json` |
+| Windows | `%APPDATA%\ClearScribe\settings.json` (falls back to the user's `AppData\Roaming`) |
+| Linux configuration convention | `$XDG_CONFIG_HOME/clearscribe/settings.json`, or `~/.config/clearscribe/settings.json` |
+
+Set `CLEARSCRIBE_CONFIG_DIR` in `.env` or the backend environment to override the configuration directory; an absolute path is recommended. Development and built mode share these settings for the current OS user. Recordings and transcripts remain in your chosen output folder. Configuration contains only a schema version and the save-folder path, not API keys, audio, transcripts, or browser authentication tokens. Other recognition/UI preferences are not persisted by this feature.
+
+Startup validates the restored folder using the same checks as folder selection. If settings are damaged, the folder was removed, permissions changed, or an external disk is disconnected, the page shows a warning and requires a valid selection. The saved path is retained so reconnecting the drive and restarting can restore it. Cancelling a folder dialog preserves the previous selection. Choosing a new folder replaces the settings atomically; failure to save is reported instead of claiming persistence. Moving this file to another computer does not make its local folder path portable.
+
+## Optional Chrome extension: one-key recording
+
+**Quick Start is a Chrome browser extension feature**, supplied in [`chrome-extension/`](chrome-extension/). The normal page and Start button work without the extension. Chrome and the local frontend/backend must be running; the global shortcut cannot launch a fully quit Chrome or start the local servers.
+
+1. Start the built app with `npm start` (after building), or start development with `npm run dev`.
+2. Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this repository's `chrome-extension` folder. Chrome adds a card named **ClearScribe Quick Start**. If ClearScribe was already open before installation, refresh that webpage once so the extension can communicate with it.
+3. On the **ClearScribe Quick Start** card, click **Details**, then **Extension options** to open the app URL settings. The default app URL is `http://127.0.0.1:4317/`. For development use `http://127.0.0.1:5173/`; for a custom port, enter its exact local root URL. Only HTTP URLs on `127.0.0.1` are accepted. Click **Save** after changing the URL; changing this setting does not require reloading the extension.
+4. At `chrome://extensions/shortcuts`, set **Open ClearScribe and start recording** to your preferred combination and set its scope to **Global**. The suggested shortcut is Ctrl+Shift+9 (Command+Shift+9 on macOS). OS or other extension conflicts may require a different combination.
+5. Complete first-use setup on the page: backend API key, writable save folder, available model, and Chrome/OS microphone permission. For predictable capture, verify your microphone once with the normal Start button.
+6. From another tab or another app, press the shortcut. If ClearScribe is closed, the extension opens it, focuses the browser window, waits for setup to load, and requests a new recording and live-caption session. If already open, it reuses the page. Clicking the extension toolbar icon does the same thing.
+
+**After updating the extension files** (for example, after pulling a new version of this project):
+
+1. Finish any active recording first and wait for **Finishing** to complete.
+2. Open `chrome://extensions` and find the **ClearScribe Quick Start** card. With **Developer mode** enabled, click the card's circular-arrow **Reload** button. This makes Chrome reread the files in `chrome-extension/`. Refreshing the extensions management webpage alone does not reload the extension.
+3. Switch to each already-open **ClearScribe webpage** and refresh it using Chrome's toolbar reload button, **Command+R** on Mac, or **Ctrl+R** on Windows. This reconnects the page to the newly loaded extension. If no ClearScribe page is open, skip this step; the shortcut will open a new one.
+4. Press your shortcut again to open or focus ClearScribe and start a new session.
+
+These are two separate actions: **Reload** on the extension card updates the extension; refreshing the **ClearScribe webpage** reconnects that page. You do not need to reinstall the extension or repeat these steps for everyday use, service restarts, or saved URL/shortcut changes. See Chrome's official guides for [opening extension settings](https://developer.chrome.com/docs/extensions/develop/ui/options-page#locating_the_options_page) and [reloading an extension](https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world#reload_the_extension).
+
+Repeated presses during connection/recording/finishing only bring the page forward; they do not replace an active call. If a different page owns an active session, return to that page rather than starting another call. Loading or refreshing the URL on its own never starts recording. Missing settings and microphone permissions require your action; Chrome can also block audio startup on a newly opened page. ClearScribe then asks you to click **Start session** and checks audio startup before opening an upstream transcription session. One-key startup remains subject to browser and OS permissions.
+
+If the local app cannot be reached, the extension displays a **!** badge; hover its toolbar icon for the error. Check that the service is running and that the configured URL matches your mode/port, then press again. Successful delivery brings you to the page, which shows actual connection/recording status and any setup or API errors.
+
+The extension has access only to `http://127.0.0.1/*` and stores its app URL locally in Chrome. Chrome host permissions cannot be limited to individual ports, so this covers loopback ports. The extension sends a start request to the matching app tab; microphone capture, captions and file saving remain in ClearScribe. It does not handle your API key or record inside the extension.
+
 ## A call, from beginning to end
 
 1. Configure your backend key and restart the service.
@@ -74,7 +114,7 @@ Clear screen clears only the visible captions. It does not delete any saved file
 
 The backend intersects **the dynamic account model list with a known capability allowlist** in `server/models.ts`. Model IDs must match exactly; unknown snapshots and assistant, translation, TTS, deprecated and offline-only models are excluded. New model releases usually require documentation review, adapter maintenance and tests. The account list does not provide a complete capability matrix, and a listed model can still fail due to permissions, quota or endpoint access.
 
-Listing permission denied: compatible candidates are marked **unconfirmed** and actual session creation checks access. Network/authentication failures: the UI explicitly shows stale/candidate results and their last successful timestamp. Successful lists that exclude your saved preference require you to choose another available model. Refreshes are cached for five minutes and explicit refreshes are throttled to at most once per 30 seconds, including concurrent requests. Only the model preference is stored in browser local storage.
+Listing permission denied: compatible candidates are marked **unconfirmed** and actual session creation checks access. Network/authentication failures: the UI explicitly shows stale/candidate results and their last successful timestamp. Successful lists that exclude your saved preference require you to choose another available model. Refreshes are cached for five minutes and explicit refreshes are throttled to at most once per 30 seconds, including concurrent requests. The model preference is stored in browser local storage. The save-folder preference is stored by the backend in the per-user settings file described below.
 
 Live-model delay defaults to **low**; **medium** supplies more context at the expense of earlier text. Context and terms are recognition hints, never a request to generate missing content. The UI conservatively limits context to 400 characters, 40 terms and 60 characters per term. Terms cannot contain angle brackets or embedded newlines. English uses `languages: ["en"]`; the legacy singular field is not sent.
 
@@ -93,7 +133,7 @@ The example is synthetic. UTC offsets and fixed-width date/time fields use the m
 
 - TXT is saved incrementally as results change, including clearly marked `[PROVISIONAL]` text. Final text replaces its partial at the same sequence position. Updates coalesce, sync a `.txt.tmp` file and rename it into place; no permanent JSON/JSONL sidecar is created.
 - Recording includes natural pauses from the same microphone stream. MediaRecorder chunks are appended in order to a single `.webm.part` (or corresponding format) directly in your selected folder; chunks are not assumed independently playable. A final audio-name reservation prevents collisions. Only a successful encoder/upload/flush and backend finalization marks audio **Saved** and renames the part file.
-- Cancelling the picker preserves the current selection. The backend validates real paths, project containment, ancestor `.git` markers, permissions and an exclusive write probe on selection and Start. Output is never staged inside this repository. Folder selection is held only in backend memory; select again after a service restart.
+- Cancelling the picker preserves the current selection. The backend validates real paths, project containment, ancestor `.git` markers, permissions and an exclusive write probe on selection and Start. Output is never staged inside this repository. Folder selection is persisted in the per-user settings file and revalidated after a service restart. Restarting never resumes recording automatically.
 - Refreshing/closing releases the upstream connection and attempts to save text already received; it cannot guarantee the final MediaRecorder chunk. Capture never resumes automatically. The current backend process exposes its latest TXT/finished audio for recovery/download; older files remain in Finder. There is no session database.
 - Crashes, unplugged disks, full disks and power loss can leave empty reservations, partial audio or temporary TXT. Do not assume these are complete recordings; preserve recoverable files and inspect them locally. No application can guarantee the normal two-file outcome after those failures. The application does not silently delete partial content.
 

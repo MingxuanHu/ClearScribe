@@ -4,9 +4,10 @@ import { timestamp, transcriptText, type Segment } from '../shared/transcript';
 import type { ModelList } from '../server/models';
 type Phase = 'Idle' | 'Connecting' | 'Listening' | 'Switching' | 'Stopping' | 'Stopped' | 'Error';
 interface Files { base: string; extension: string; audioSaved: boolean; txtSaved: boolean; audioFailed: boolean; txtFailed: boolean; bytes: number }
-interface Bootstrap { token: string; keyConfigured: boolean; folder?: { id: string; path: string }; files?: Files; active: boolean; platform: string }
+interface Bootstrap { token: string; keyConfigured: boolean; folder?: { id: string; path: string }; files?: Files; active: boolean; platform: string; settingsWarning?: string }
 export function App() {
   const preview = import.meta.env.DEV && new URLSearchParams(location.search).get('preview') === '1';
+  const [shortcutRequested, setShortcutRequested] = useState(false);
   const [boot, setBoot] = useState<Bootstrap>();
   const [catalog, setCatalog] = useState<ModelList>();
   const [model, setModel] = useState(() => localStorage.getItem('clearscribe-model') || 'gpt-live-transcribe');
@@ -73,7 +74,7 @@ export function App() {
       return;
     }
     fetch('/api/bootstrap').then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(async (b: Bootstrap) => {
-      setBoot(b); if (b.files) setFiles(b.files);
+      setBoot(b); if (b.settingsWarning) setWarning(b.settingsWarning); if (b.files) setFiles(b.files);
       const r = await fetch('/api/models'); setCatalog(await r.json());
       if (b.files) {
         const restored = await fetch('/api/files').then(r => r.json());
@@ -125,8 +126,28 @@ export function App() {
     }
     if (data.end && pending.current) requestSwitch(pending.current);
   }
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (preview || event.source !== window || event.origin !== location.origin || event.data?.type !== 'clearscribe-start' || typeof event.data.requestId !== 'string') return;
+      window.postMessage({ type: 'clearscribe-start-ack', requestId: event.data.requestId }, location.origin);
+      setShortcutRequested(true);
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, [preview]);
+  useEffect(() => {
+    if (!shortcutRequested || !boot || !catalog || busy) return;
+    setShortcutRequested(false);
+    if (boot.active) { setWarning('A session is already active in another page. Return to that page to follow the captions.'); return; }
+    if (['Connecting', 'Listening', 'Switching', 'Stopping'].includes(phaseRef.current)) return;
+    if (!boot.keyConfigured || !boot.folder || !catalog.models.some(m => m.id === model)) {
+      setMessage('Quick Start needs setup: configure the backend API key, choose a writable save folder, and select an available model. Then use the shortcut again.');
+      return;
+    }
+    void start();
+  });
   async function start() {
-    if (active || !boot || !boot.keyConfigured || !boot.folder || !catalog?.models.some(m => m.id === model)) return;
+    if (['Connecting', 'Listening', 'Switching', 'Stopping'].includes(phaseRef.current) || !boot || !boot.keyConfigured || !boot.folder || !catalog?.models.some(m => m.id === model)) return;
     const thisAttempt = ++attempt.current;
     stopping.current = false; switching.current = false; speaking.current = false; pending.current = '';
     queued.current = []; queuedBytes.current = 0; sessionId.current = ''; notes.current = [];
