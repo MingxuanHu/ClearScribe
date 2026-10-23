@@ -6,8 +6,11 @@ import path from 'node:path';
 import os from 'node:os';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createApp, type AppOptions } from '../server/app.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpeg from 'ffmpeg-static';
 
-async function fixture(opts: { missingKey?: boolean; omitFinal?: boolean; switchFail?: boolean; backpressure?: boolean } = {}) {
+async function fixture(opts: { missingKey?: boolean; omitFinal?: boolean; switchFail?: boolean; backpressure?: boolean; mp3?: boolean } = {}) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'clearscribe-integration-')));
   const folder = path.join(root, 'output'), project = path.join(root, 'project');
   await mkdir(folder); await mkdir(project);
@@ -32,6 +35,7 @@ async function fixture(opts: { missingKey?: boolean; omitFinal?: boolean; switch
     });
   });
   const options: AppOptions = { port: 0, project, key: opts.missingKey ? '' : 'obviously-fake-test-key',
+    settingsFile: opts.mp3 ? path.join(root, 'config', 'settings.json') : undefined,
     picker: async () => cancelled ? null : folder,
     upstream: () => {
       const socket = new WebSocket(`ws://127.0.0.1:${fakePort}`);
@@ -87,6 +91,32 @@ test('Stop commits last speech, waits for final and makes exactly two output fil
     f.send({ type: 'audio', sessionId: ready.sessionId, audio: 'AAAA' }); assert.match((await f.wait('error', index)).message, /No matching/);
     await f.recording(second.sessionId); f.send({ type: 'stop', sessionId: second.sessionId, audioComplete: true });
     await f.wait('stopped', index); assert.equal((await readdir(f.folder)).length, 4);
+  } finally { await f.cleanup(); }
+});
+test('new sessions register durable jobs and generate an extra MP3 without conversion UI messages', async () => {
+  const f = await fixture({ mp3: true });
+  try {
+    assert.ok(ffmpeg);
+    const sample = path.join(f.root, 'synthetic.webm');
+    await promisify(execFile)(ffmpeg, ['-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'libopus', '-y', sample]);
+    f.start(); const ready = await f.wait('ready');
+    const jobs = path.join(f.root, 'config', 'mp3-jobs');
+    assert.equal((await readdir(jobs)).length, 1);
+    const upload = await f.api(`/api/recording/${ready.sessionId}`, {
+      method: 'POST', headers: { 'x-chunk-sequence': '0' }, body: new Uint8Array(await readFile(sample)),
+    });
+    assert.equal(upload.status, 200);
+    f.send({ type: 'stop', sessionId: ready.sessionId, audioComplete: true });
+    const stopped = await f.wait('stopped');
+    assert.equal(stopped.files.audioSaved, true);
+    const deadline = Date.now() + 5000;
+    while (!(await readdir(f.folder)).includes(`${stopped.files.base}.mp3`) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.deepEqual((await readdir(f.folder)).sort(), ['txt', 'webm', 'mp3'].map(ext => `${stopped.files.base}.${ext}`).sort());
+    assert.deepEqual(await readdir(jobs), []);
+    assert.equal(f.inbox.some(message => ['warning', 'error', 'fatal'].includes(message.type)), false);
+    assert.deepEqual(await readFile(path.join(f.folder, `${stopped.files.base}.webm`)), await readFile(sample));
   } finally { await f.cleanup(); }
 });
 test('model switching drains old segment, confirms new session, retains same files and sample timeline', async () => {

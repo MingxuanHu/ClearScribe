@@ -4,18 +4,22 @@
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22.12.0" },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "tsx scripts/dev.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "build": "npm run typecheck && vite build && tsc -p tsconfig.server.json",
+    "build": "npm run check:ffmpeg && npm run typecheck && vite build && tsc -p tsconfig.server.json",
     "start": "node --env-file-if-exists=.env server-dist/server/index.js",
     "check": "npm run typecheck && npm test && npm run build",
     "secrets": "node scripts/scan-secrets.mjs",
-    "licenses": "node scripts/licenses.mjs"
+    "licenses": "node scripts/licenses.mjs",
+    "check:ffmpeg": "node scripts/check-ffmpeg.mjs"
   },
   "dependencies": {
+    "ffmpeg-static": "5.3.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "ws": "^8.18.3"
@@ -29,5 +33,38 @@
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vite": "^7.1.0"
-  }
+  },
+  "clearscribe": {
+    "ffmpeg": {
+      "package": "ffmpeg-static",
+      "version": "5.3.0",
+      "binaryRelease": "b6.1.1",
+      "note": "The upstream binary release contains platform-specific FFmpeg versions; npm run check:ffmpeg reports the installed executable version.",
+      "recordingPlatforms": {
+        "darwin": [
+          "arm64",
+          "x64"
+        ],
+        "win32": [
+          "x64"
+        ]
+      },
+      "ciPlatforms": {
+        "linux": [
+          "x64",
+          "arm64"
+        ]
+      },
+      "installation": "npm ci or npm install with lifecycle scripts enabled downloads the native binary; network access is needed during installation only."
+    }
+  },
+  "os": [
+    "darwin",
+    "win32",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ]
 }

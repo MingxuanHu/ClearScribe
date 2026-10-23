@@ -52,7 +52,15 @@ Open **[http://127.0.0.1:4317](http://127.0.0.1:4317)**. The backend serves only
 
 The code is free and open source. **OpenAI API usage is billed separately; ChatGPT Plus does not include API usage.** Consult [OpenAI API pricing](https://developers.openai.com/api/docs/pricing) and your API billing settings. No fixed price is asserted here.
 
-## Remembered save folder
+## Bundled FFmpeg
+
+`ffmpeg-static` is a pinned runtime dependency (`5.3.0`, upstream binary release tag `b6.1.1`). `npm ci` or `npm install` downloads the native executable into `node_modules`; allow npm lifecycle scripts and network access to the package registry and upstream GitHub binary downloads. No Homebrew installation, system PATH entry, cloud conversion service, or runtime download is needed. Do not use `--ignore-scripts` for a working installation.
+
+Recording targets are macOS Apple Silicon (`darwin/arm64`), macOS Intel (`darwin/x64`), and Windows x64 (`win32/x64`). Linux x64/arm64 is supported for build/queue CI only; native Linux folder selection remains unsupported. Run `npm ci` on each target system; do not copy `node_modules` between systems or CPU architectures. `npm run build` checks that the executable runs and includes Opus decoding and the `libmp3lame` encoder; `npm run check:ffmpeg` runs that check separately. The upstream binary release contains different actual FFmpeg versions per platform (the tested macOS arm64 binary reports FFmpeg 6.0), so the check reports the executable's own version rather than assuming the release tag is its version. Platform requirements are also recorded under `clearscribe.ffmpeg` in `package.json`.
+
+Keep `node_modules` and the executable with this Node application when deploying; `dist` and `server-dist` alone are insufficient. Rebuilding does not install a missing binary: rerun `npm ci`. See [third-party notices](THIRD_PARTY_NOTICES.md) for the downloaded binary's separate licensing and redistribution requirements.
+
+## Remembered save folder and preferences
 
 Choosing a folder saves its canonical absolute path immediately to a local `settings.json` file. The next `npm start` or `npm run dev` restores it, including after reboot. Default locations:
 
@@ -62,9 +70,37 @@ Choosing a folder saves its canonical absolute path immediately to a local `sett
 | Windows | `%APPDATA%\ClearScribe\settings.json` (falls back to the user's `AppData\Roaming`) |
 | Linux configuration convention | `$XDG_CONFIG_HOME/clearscribe/settings.json`, or `~/.config/clearscribe/settings.json` |
 
-Set `CLEARSCRIBE_CONFIG_DIR` in `.env` or the backend environment to override the configuration directory; an absolute path is recommended. Development and built mode share these settings for the current OS user. Recordings and transcripts remain in your chosen output folder. Configuration contains only a schema version and the save-folder path, not API keys, audio, transcripts, or browser authentication tokens. Other recognition/UI preferences are not persisted by this feature.
+Set `CLEARSCRIBE_CONFIG_DIR` in `.env` or the backend environment to override the configuration directory; an absolute path is recommended. Development and built mode share these settings for the current OS user. Recordings and transcripts remain in your chosen output folder. The same file also stores microphone/model choices and recognition/display preferences. It contains no API keys, recorded audio, transcripts, or browser authentication tokens. Recognition context and terms are stored as local preferences.
 
 Startup validates the restored folder using the same checks as folder selection. If settings are damaged, the folder was removed, permissions changed, or an external disk is disconnected, the page shows a warning and requires a valid selection. The saved path is retained so reconnecting the drive and restarting can restore it. Cancelling a folder dialog preserves the previous selection. Choosing a new folder replaces the settings atomically; failure to save is reported instead of claiming persistence. Moving this file to another computer does not make its local folder path portable.
+
+Changes are saved automatically after a short pause (300 ms), without waiting for a session to end. Fast edits are coalesced, saves are serialized, and folder selection and preference patches merge into the latest settings so one cannot erase the other. Background requests use keepalive and pending edits are flushed when the page becomes hidden or closes; abrupt browser/process termination can still interrupt an unsaved edit. A failed preference save retains pending edits and retries while the page remains open, with a save warning; this is separate from the intentionally silent MP3 queue.
+
+Saved fields are `microphoneId`, `model`, `keywords`, `context`, `delay`, `noiseSuppression`, `autoGainControl`, `echoCancellation`, `speechThreshold`, `captionFontSize`, and `advancedOpen`. Session state (recording, transcript, timer, scroll position, and pending model switches) is not restored. Existing version-1 files containing only `saveFolder` remain valid; absent preference fields use the existing defaults. Preferences can be saved before selecting a folder and still restore if the recording drive is unavailable.
+
+Example schema (synthetic values):
+
+```json
+{
+  "version": 1,
+  "saveFolder": "/Users/example/Recordings",
+  "preferences": {
+    "microphoneId": "",
+    "model": "gpt-live-transcribe",
+    "keywords": "Java\nSpring Boot",
+    "context": "An English conversation about Java backend engineering.",
+    "delay": "low",
+    "noiseSuppression": false,
+    "autoGainControl": true,
+    "echoCancellation": false,
+    "speechThreshold": 0.008,
+    "captionFontSize": 28,
+    "advancedOpen": false
+  }
+}
+```
+
+An empty microphone ID means the system default. Browser microphone IDs are scoped to the browser profile and origin: switching between development/production ports or browsers can make a saved ID unavailable. Missing devices and unavailable models keep their saved selections; the app does not silently substitute another device/model. Reconnect the microphone or choose another input when prompted. Stored recognition hints can include an unfinished draft, but starting a session still uses the existing stricter hint validation.
 
 ## Optional Chrome extension: one-key recording
 
@@ -114,28 +150,39 @@ Clear screen clears only the visible captions. It does not delete any saved file
 
 The backend intersects **the dynamic account model list with a known capability allowlist** in `server/models.ts`. Model IDs must match exactly; unknown snapshots and assistant, translation, TTS, deprecated and offline-only models are excluded. New model releases usually require documentation review, adapter maintenance and tests. The account list does not provide a complete capability matrix, and a listed model can still fail due to permissions, quota or endpoint access.
 
-Listing permission denied: compatible candidates are marked **unconfirmed** and actual session creation checks access. Network/authentication failures: the UI explicitly shows stale/candidate results and their last successful timestamp. Successful lists that exclude your saved preference require you to choose another available model. Refreshes are cached for five minutes and explicit refreshes are throttled to at most once per 30 seconds, including concurrent requests. The model preference is stored in browser local storage. The save-folder preference is stored by the backend in the per-user settings file described below.
+Listing permission denied: compatible candidates are marked **unconfirmed** and actual session creation checks access. Network/authentication failures: the UI explicitly shows stale/candidate results and their last successful timestamp. Successful lists that exclude your saved preference require you to choose another available model. Refreshes are cached for five minutes and explicit refreshes are throttled to at most once per 30 seconds, including concurrent requests. Model and save-folder preferences are stored by the backend in the per-user settings file described above. If the file has no saved preferences, an existing browser-local model choice is migrated once; saved file preferences take precedence thereafter.
 
 Live-model delay defaults to **low**; **medium** supplies more context at the expense of earlier text. Context and terms are recognition hints, never a request to generate missing content. The UI conservatively limits context to 400 characters, 40 terms and 60 characters per term. Terms cannot contain angle brackets or embedded newlines. English uses `languages: ["en"]`; the legacy singular field is not sent.
 
 Automatic gain is on; noise suppression and echo cancellation default off because the phone speaker is wanted input. Adjust these in **Fine-tune recognition** using your actual setup. The energy gate defaults to 0.008 normalized RMS, with 300 ms pre-roll, 850 ms end silence and a 25-second maximum turn. A low-volume phone may require a lower threshold or closer placement. This gate is a simple, tunable heuristic; background sound may trigger false speech.
 
-## Your two files
+## Your session files
 
-All formal outputs are flat in the selected folder. A successful call produces exactly two files sharing a local start-time basename:
+All formal outputs are flat in the selected folder. TXT and original audio are written during capture; after a successful audio finalization, a local background worker generates an additional MP3 with the same basename:
 
 ```text
 2026-10-23_20-48-15+1100.txt
 2026-10-23_20-48-15+1100.webm
+2026-10-23_20-48-15+1100.mp3
 ```
 
-The example is synthetic. UTC offsets and fixed-width date/time fields use the machine's local timezone. Same-second collisions use the same incremental suffix on both files, e.g. `…+1100-1.txt` and `…+1100-1.webm`; exclusive creation protects existing files. Extension follows the actual supported MIME type: WebM/Opus → `.webm`, MP4 → `.m4a`, Ogg/Opus → `.ogg`. Renaming WebM does not convert it to WAV.
+The example is synthetic. UTC offsets and fixed-width date/time fields use the machine's local timezone. Same-second collisions use the same incremental suffix on all session files, e.g. `…+1100-1.txt` and `…+1100-1.webm`; exclusive creation protects existing files. Extension follows the actual supported MIME type: WebM/Opus → `.webm`, MP4 → `.m4a`, Ogg/Opus → `.ogg`. Renaming WebM does not convert it to WAV.
 
 - TXT is saved incrementally as results change, including clearly marked `[PROVISIONAL]` text. Final text replaces its partial at the same sequence position. Updates coalesce, sync a `.txt.tmp` file and rename it into place; no permanent JSON/JSONL sidecar is created.
 - Recording includes natural pauses from the same microphone stream. MediaRecorder chunks are appended in order to a single `.webm.part` (or corresponding format) directly in your selected folder; chunks are not assumed independently playable. A final audio-name reservation prevents collisions. Only a successful encoder/upload/flush and backend finalization marks audio **Saved** and renames the part file.
 - Cancelling the picker preserves the current selection. The backend validates real paths, project containment, ancestor `.git` markers, permissions and an exclusive write probe on selection and Start. Output is never staged inside this repository. Folder selection is persisted in the per-user settings file and revalidated after a service restart. Restarting never resumes recording automatically.
 - Refreshing/closing releases the upstream connection and attempts to save text already received; it cannot guarantee the final MediaRecorder chunk. Capture never resumes automatically. The current backend process exposes its latest TXT/finished audio for recovery/download; older files remain in Finder. There is no session database.
-- Crashes, unplugged disks, full disks and power loss can leave empty reservations, partial audio or temporary TXT. Do not assume these are complete recordings; preserve recoverable files and inspect them locally. No application can guarantee the normal two-file outcome after those failures. The application does not silently delete partial content.
+- Crashes, unplugged disks, full disks and power loss can leave empty reservations, partial audio or temporary TXT. Do not assume these are complete recordings; preserve recoverable files and inspect them locally. No application can guarantee the normal three-file outcome after those failures. The application does not silently delete partial content.
+
+### Quiet background MP3 generation
+
+MP3 uses mono, 24 kHz, 48 kbps (about 22 MB/hour, plus small overhead). The original recording and its current bitrate remain unchanged. This is an extra lossy convenience copy for sharing; it does not improve the source quality. The app does not add MP3 progress indicators, failure banners, or retry dialogs. The existing audio download continues to return the original recording; the MP3 appears directly in the same save folder.
+
+Only sessions created by this version register conversion intents. There is no scan, import, or backfill of historical recordings. Intents live in `mp3-jobs/` beside `settings.json`, with source paths and retry metadata but no audio/transcript contents. Intents are synced before capture starts; a finalized, nonempty source without its `.part` sibling is eligible. Incomplete recordings are retained but are not converted.
+
+The worker runs one low-priority FFmpeg child at a time with one codec thread, and starts no new conversion while a session is connecting, recording, or finishing. A conversion already running can finish at low priority. CPU/disk sharing still has a cost; no zero-impact latency guarantee is made. Conversion and a full decode check occur on a private temporary file before publishing the MP3. Publication refuses existing destinations; hard links publish on compatible filesystems, with an exclusive short-lived reservation followed by rename on exFAT and other filesystems without hard links. Interrupted reservations identified as this job's own can be recovered. Source audio and TXT are never modified or deleted by the queue.
+
+Failures retry after 1 minute, 5 minutes, and 30 minutes, then once every 24 hours without a maximum attempt count. Technical details go only to local backend stderr. Missing drives, full disks, invalid audio, and missing executables do not block captions or starting another session. An unrecoverable condition cannot produce an MP3 until corrected; the original files remain available. The worker checks pending intents every 30 seconds while the backend runs. Closing the webpage does not stop the backend worker. Stopping the backend aborts conversion and retains its intent; the next backend start resumes pending new-session work with its retry schedule. An unavailable drive is retried without reselecting the recording folder. A shutdown or power failure can leave temporary files or reservations; no normal-completion guarantee is made after storage failure. One backend instance should own a configuration directory.
 
 Timestamps are **approximate segment starts from the microphone sample clock**, relative to capture start. They are not network arrival times, speaker timestamps or word-level alignment. No confidence percentage or speaker identity is invented.
 
@@ -155,7 +202,7 @@ Same microphone → MediaRecorder → independent bounded HTTP chunk queue
                                selected external folder / audio.part
 ```
 
-The browser does not play captured audio. The backend constructs all OpenAI requests; the browser cannot specify upstream URLs or authentication. Recognition audio is sent to OpenAI: **this is not offline transcription**. Encoded recordings stay on the local machine and are not sent to any other service by ClearScribe.
+The browser does not play captured audio. The backend constructs all OpenAI requests; the browser cannot specify upstream URLs or authentication. Recognition audio is sent to OpenAI: **this is not offline transcription**. Encoded recordings and MP3 conversion stay on the local machine and are not sent to any other service by ClearScribe. The 24 kHz PCM recognition path and its bandwidth are unchanged.
 
 PCM transport stops with an explicit gap warning beyond five seconds of upstream/backpressure or switch buffering; it never accumulates an entire utterance before transmission. Recording has its own 8 MiB browser queue, sequential uploads, a 1 MiB chunk limit and a 10-second request timeout. Failed audio saving does not block captions. Audio finalization has a bounded browser wait; final transcript drain waits up to eight seconds. There is no automatic reconnect/replay, avoiding hidden repeated transcription/cost. Retry means a new user-initiated call. Existing results remain visible.
 
