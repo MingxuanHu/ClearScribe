@@ -159,7 +159,8 @@ export class Mp3Queue {
         const handle = await open(temp, 'wx', 0o600); await handle.close();
         await this.convert(job.source, temp, this.abort.signal);
         if (this.stopped) throw new Error('Conversion interrupted');
-        const finished = await open(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
+        // Windows requires a writable handle for FlushFileBuffers/fsync.
+        const finished = await open(temp, constants.O_RDWR | constants.O_NOFOLLOW);
         try { if (!(await finished.stat()).size) throw new Error('Empty MP3'); await finished.sync(); } finally { await finished.close(); }
         await publishMp3(temp, output, job.id);
         await this.remove(job);

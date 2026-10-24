@@ -273,4 +273,4 @@ See [verification details](docs/VERIFICATION.md), [official API decisions](docs/
 
 ## License
 
-[Apache License, Version 2.0](LICENSE). The original full license text is retained; it was checked against the [Apache Software Foundation source](https://www.apache.org/licenses/LICENSE-2.0.txt). Direct runtime dependencies retain their MIT notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[Apache License, Version 2.0](LICENSE). The original full license text is retained; it was checked against the [Apache Software Foundation source](https://www.apache.org/licenses/LICENSE-2.0.txt). Runtime dependencies, including FFmpeg and its separate terms, are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
