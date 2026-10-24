@@ -13,11 +13,11 @@ Use macOS and current Chrome, a locally configured key, an explicitly selected e
 - [ ] Font controls, copy, auto-follow pause, Jump to latest, TXT/audio download and Clear screen all work. Clearing the screen leaves disk files intact.
 - [ ] Disconnect the Internet or close the upstream: existing text remains, the gap is explicit, there is no hidden replay/reconnect. User retry creates a new call.
 - [ ] Make save folder unwritable/full or detach its drive. Captions can continue, separate save statuses report failure, no false Saved appears. Start a new call in a new folder.
-- [ ] Final normal output is exactly two flat files, with the same safe basename/offset, no extra JSON or metadata. Same-second starts do not overwrite anything. TXT order, punctuation, approximate times and provisional labels match the UI.
+- [ ] Normal capture produces TXT and original audio, followed by an asynchronously generated MP3 in the same folder, with the same safe basename/offset and no permanent JSON sidecar. Same-second starts do not overwrite anything. TXT order, punctuation, approximate times and provisional labels match the UI.
 - [ ] **Play the entire final encoded audio in a trusted local player**, including opening, last phrase, natural pauses and model-switch boundary. Confirm MIME/extension agreement. Unit tests contain deliberately non-playable synthetic byte buffers and cannot verify this.
 - [ ] Refresh/close: browser warns during active capture; the backend releases its upstream; the latest files remain recoverable. Partial recordings are not mislabeled complete. Restart the service and reselect the folder.
 - [ ] Run at least **one hour**, crossing the 50-minute session rotation. Watch RAM, disk writes, CPU, queue behavior and continuity. Confirm no background silent termination. Four-hour safety/transcript limits should be tested separately if relevant.
-- [ ] Compare caption latency/resource use with the recording path enabled and with it disabled in a controlled development instrumentation branch (the shipped UI requires recording for the normal two-file workflow). Record first-character latency, final-text latency and network RTT separately. Do not invent numbers or claim recording has no cost.
+- [ ] Compare caption latency/resource use with the recording path enabled and with it disabled in a controlled development instrumentation branch (the shipped UI requires recording for the normal recording workflow). Record first-character latency, final-text latency and network RTT separately. Do not invent numbers or claim recording has no cost.
 - [ ] Inspect local logs, public assets, staged files and history with secret scanning. Manually review that screenshots and text are synthetic. Complete the README publication checklist before pushing.
 
 ## Persistent settings and Chrome Quick Start (macOS and Windows)
@@ -33,3 +33,28 @@ These are manual acceptance checks; automated mocks do not establish actual brow
 - Press the shortcut repeatedly while connecting, recording and finishing. Verify the active session and output pair are preserved. Open two app tabs and verify the extension does not start a second call when another page owns the session.
 - Stop the local service and press the shortcut. Verify the extension badge/hover error (or the page's backend-unavailable message in development mode). Restore the service and retry.
 - Test both `4317` built mode and `5173` development mode, a custom port, a shortcut conflict, and Chrome fully quit. Confirm plain navigation/reload never starts a session.
+
+## Background MP3 and favicon
+
+- [ ] Install with `npm ci` on macOS arm64/x64 and Windows x64; run `npm run check:ffmpeg` and `npm run build`. Record the actual binary version. Verify a missing binary fails the build with installation instructions.
+- [ ] Confirm the approved green speech-wave favicon appears in the browser tab in development and production.
+- [ ] Finish a real microphone session, then immediately start another. Confirm the original audio and TXT are available before MP3 completion and there are no conversion prompts or status banners. Listen to the MP3 and verify mono/24 kHz/48 kbps output.
+- [ ] Close the tab while conversion is pending; keep the backend running and confirm MP3 completion. Stop/restart the backend during conversion and confirm eventual recovery without historical backfill.
+- [ ] Unplug/reconnect the save drive or simulate a full drive. Confirm TXT/WebM remain intact, no MP3 UI warning appears, and the registered job retries on its persisted schedule after recovery.
+- [ ] Exercise APFS/NTFS and exFAT publication, preexisting MP3 collisions, and an interrupted temporary output/reservation. Verify complete MP3 publication and preservation of existing files.
+- [ ] Compare real caption latency while a previous session converts in the background. Confirm low-priority single-job conversion does not create unacceptable latency on target hardware.
+
+## Saved preferences
+
+- [ ] Start from an existing version-1 directory-only settings file. Change microphone, model, font size, terms/context, delay, threshold, all three audio toggles, and advanced-panel visibility. Reload and restart the backend; verify every explicit choice restores from the same `settings.json`.
+- [ ] Check that saved file preferences take precedence over legacy `clearscribe-model` localStorage, and that a legacy browser model is migrated when file preferences are absent.
+- [ ] Change a preference before choosing a save folder, then choose/change/cancel the folder dialog. Verify neither operation erases unrelated preferences. Repeat fast changes during a slow settings write.
+- [ ] Remove the chosen microphone or make the model unavailable. Confirm the saved selection is retained and no automatic substitute is used. Test the system-default microphone choice separately.
+- [ ] Disconnect the recording drive, restart, and verify preferences still restore. Change font size and confirm the saved directory path remains intact.
+- [ ] Temporarily deny configuration-directory writes. Verify the previous file remains intact, pending preference edits retry, and successful recovery clears only the preference-save warning. MP3 failures must continue to produce no UI notifications.
+
+## Open save folder
+
+- [ ] With no selected folder, confirm the open-folder button is disabled. Choose a folder and verify **Open in Finder** on macOS or **Open in File Explorer** on Windows opens that exact folder without a selection dialog.
+- [ ] Open the folder while recording and after Stop. Verify capture continues normally and saved folder/preferences remain unchanged. **Change save folder** must continue to open the existing selection dialog when idle.
+- [ ] Remove/disconnect the save folder and click Open. Confirm a useful error appears, the saved path is preserved, and reconnecting the drive allows a later retry.

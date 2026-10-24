@@ -58,7 +58,7 @@ export class CallFiles {
   private txt!: FileHandle;
   base = '';
   extension = '';
-  constructor(readonly folder: string, readonly project: string) {}
+  constructor(readonly folder: string, readonly project: string, private onFinished?: (files: CallFiles) => void) {}
   async create(mime: string, date = new Date()) {
     this.extension = MIME_EXTENSIONS[mime];
     if (!this.extension) throw new Error('Unsupported recording format');
@@ -110,6 +110,10 @@ export class CallFiles {
     } catch (e) { this.txtFailed = true; throw e; }
   }
   async finish(completeAudio: boolean) {
+    try { await this.finishFiles(completeAudio); }
+    finally { this.onFinished?.(this); }
+  }
+  private async finishFiles(completeAudio: boolean) {
     try { await this.writer; } catch { this.txtFailed = true; }
     this.closed = true;
     if (!completeAudio) this.audioFailed = true;

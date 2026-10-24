@@ -7,28 +7,48 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { ModelCatalog, compatible, parseSettings } from './models.js';
 import { chooseFolder, validateFolder, CallFiles, MIME_EXTENSIONS } from './storage.js';
 import { equal, localRequest, safeError } from './security.js';
-import { readSettings, writeSettings } from './settings.js';
+import { readSettings, writeSettings, type Settings } from './settings.js';
+import { DEFAULT_PREFERENCES, parsePreferencePatch } from '../shared/preferences.js';
 import { CallSession, ConnectionError, type UpstreamFactory } from './session.js';
-export interface AppOptions { settingsFile?: string; port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; upstream?: UpstreamFactory; request?: typeof fetch }
+import { Mp3Queue } from './mp3.js';
+import { openFolder } from './folder.js';
+export interface AppOptions { settingsFile?: string; port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; openFolder?: typeof openFolder; upstream?: UpstreamFactory; request?: typeof fetch }
 export function createApp(options: AppOptions) {
   const token = randomBytes(32).toString('hex');
   const catalog = new ModelCatalog(options.key, options.request);
   let folder: { id: string; path: string } | undefined;
   let settingsWarning: string | undefined;
+  let settings: Settings = { version: 1 };
+  let settingsWriter = Promise.resolve();
+  function updateSettings(update: (current: Settings) => Settings) {
+    const next = settingsWriter.catch(() => {}).then(async () => {
+      const updated = update(settings);
+      if (options.settingsFile) await writeSettings(options.settingsFile, updated);
+      settings = updated;
+    });
+    settingsWriter = next;
+    return next;
+  }
   const restored = (async () => {
     if (!options.settingsFile) return;
     try {
       const saved = await readSettings(options.settingsFile);
-      if (saved) folder = { id: randomBytes(16).toString('hex'), path: await validateFolder(saved.saveFolder, options.project) };
+      if (saved) {
+        settings = saved;
+        if (saved.saveFolder) folder = { id: randomBytes(16).toString('hex'), path: await validateFolder(saved.saveFolder, options.project) };
+      }
     } catch {
       settingsWarning = 'Saved settings or save folder are unavailable. Reconnect the drive and restart, or choose a writable save folder again.';
     }
   })();
   let picking = false;
+  let openingFolder = false;
   let active: CallSession | undefined;
   let owner: WebSocket | undefined;
   let lastFiles: CallFiles | undefined;
   let starting = false;
+  const mp3 = options.settingsFile ? new Mp3Queue(path.join(path.dirname(options.settingsFile), 'mp3-jobs'), options.project,
+    () => starting || !!active && active.phase !== 'stopped') : undefined;
   const ws = new WebSocketServer({ noServer: true, maxPayload: 65536, perMessageDeflate: false });
   function authenticated(req: IncomingMessage) { return equal(req.headers.cookie?.split('; ').find(c => c.startsWith('cs_session='))?.slice(11), token); }
   function json(res: ServerResponse, status: number, value: unknown) { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); }
@@ -45,22 +65,48 @@ export function createApp(options: AppOptions) {
       await restored;
       if (url.pathname === '/api/bootstrap' && req.method === 'GET') {
         res.setHeader('Set-Cookie', `cs_session=${token}; HttpOnly; SameSite=Strict; Path=/`);
-        json(res, 200, { token, keyConfigured: !!options.key, folder, files: active?.files.info() || lastFiles?.info(), active: !!active && active.phase !== 'stopped', platform: process.platform, settingsWarning }); return;
+        json(res, 200, { token, keyConfigured: !!options.key, folder, preferences: { ...DEFAULT_PREFERENCES, ...settings.preferences }, preferencesSaved: !!settings.preferences,
+          files: active?.files.info() || lastFiles?.info(), active: !!active && active.phase !== 'stopped', platform: process.platform, settingsWarning }); return;
       }
       if (url.pathname.startsWith('/api/')) {
         if (!authenticated(req) || (req.method !== 'GET' && !equal(String(req.headers['x-csrf-token'] || ''), token))) { json(res, 403, { error: 'Reload the local app to establish a trusted session.' }); return; }
+        if (url.pathname === '/api/preferences' && req.method === 'POST') {
+          const patch = parsePreferencePatch(JSON.parse((await readBody(req, 48 * 1024)).toString('utf8')));
+          try {
+            await updateSettings(current => ({ ...current, preferences: { ...DEFAULT_PREFERENCES, ...current.preferences, ...patch } }));
+          } catch {
+            json(res, 507, { error: 'Could not save preferences. Check configuration directory permissions and free space.' }); return;
+          }
+          json(res, 200, { preferences: settings.preferences }); return;
+        }
         if (url.pathname === '/api/models' && req.method === 'GET') { json(res, 200, await catalog.list(url.searchParams.get('refresh') === '1')); return; }
+        if (url.pathname === '/api/folder/open' && req.method === 'POST') {
+          if (!folder) { json(res, 409, { error: 'Choose a save folder before opening it.' }); return; }
+          if (picking || openingFolder) { json(res, 409, { error: 'Finish the current folder action first.' }); return; }
+          openingFolder = true;
+          try {
+            // Only the server's selected folder may be opened; never accept a client path.
+            const selected = folder.path;
+            try {
+              if (await realpath(selected) !== selected || !(await stat(selected)).isDirectory()) throw new Error('Folder changed');
+            } catch {
+              json(res, 404, { error: 'The save folder is unavailable or has changed. Reconnect the drive or select the folder again.' }); return;
+            }
+            try { await (options.openFolder || openFolder)(selected); }
+            catch { json(res, 503, { error: 'Could not open the save folder in the file manager. Try again or open it manually.' }); return; }
+            json(res, 200, { ok: true });
+          } finally { openingFolder = false; }
+          return;
+        }
         if (url.pathname === '/api/folder' && req.method === 'POST') {
-          if (starting || picking || (active && active.phase !== 'stopped')) { json(res, 409, { error: 'Finish the current call or folder dialog first.' }); return; }
+          if (starting || picking || openingFolder || (active && active.phase !== 'stopped')) { json(res, 409, { error: 'Finish the current call or folder action first.' }); return; }
           picking = true;
           try {
             const selected = await (options.picker || chooseFolder)();
             if (selected) {
               const selectedPath = await validateFolder(selected, options.project);
-              if (options.settingsFile) {
-                try { await writeSettings(options.settingsFile, { version: 1, saveFolder: selectedPath }); }
-                catch { json(res, 500, { error: 'Could not save settings. Check permissions and free space in the configuration directory (or CLEARSCRIBE_CONFIG_DIR), then choose the folder again. The previous selection was kept.' }); return; }
-              }
+              try { await updateSettings(current => ({ ...current, saveFolder: selectedPath, preferences: { ...DEFAULT_PREFERENCES, ...current.preferences } })); }
+              catch { json(res, 500, { error: 'Could not save settings. Check permissions and free space in the configuration directory (or CLEARSCRIBE_CONFIG_DIR), then choose the folder again. The previous selection was kept.' }); return; }
               folder = { id: randomBytes(16).toString('hex'), path: selectedPath };
               settingsWarning = undefined;
             }
@@ -101,7 +147,7 @@ export function createApp(options: AppOptions) {
       if (!filename.startsWith(dist + path.sep)) { res.writeHead(404); res.end(); return; }
       const canonical = await realpath(filename);
       if (!canonical.startsWith(await realpath(dist) + path.sep) || !(await stat(canonical)).isFile()) throw new Error('Not a public file');
-      const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
+      const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
       res.setHeader('Content-Type', types[path.extname(filename)] || 'application/octet-stream');
       res.end(req.method === 'HEAD' ? undefined : await readFile(canonical));
     } catch (e) {
@@ -137,7 +183,11 @@ export function createApp(options: AppOptions) {
           let files: CallFiles | undefined;
           try {
             const canonical = await validateFolder(folder!.path, options.project);
-            files = new CallFiles(canonical, options.project); await files.create(m.mime);
+            files = new CallFiles(canonical, options.project, finished => {
+              if (finished.audioSaved) mp3?.wake();
+              else void mp3?.discard(finished.id);
+            }); await files.create(m.mime);
+            await mp3?.track(files);
             active = new CallSession(client, files, options.key, m.model, settings, options.upstream); lastFiles = files;
             if (client.readyState !== WebSocket.OPEN) { await active.stop(false); return; }
             await active.persist(); await active.start();
@@ -159,7 +209,7 @@ export function createApp(options: AppOptions) {
     });
     client.on('close', () => { clearInterval(heartbeat); if (owner === client) owner = undefined; if (active && active.phase !== 'stopped') void active.stop(false); });
   });
-  return { server, ws, async close() { if (active) await active.stop(false); ws.clients.forEach(c => c.terminate()); ws.close(); await new Promise<void>(resolve => server.close(() => resolve())); } };
+  return { server, ws, async close() { if (active) await active.stop(false); await mp3?.close(); ws.clients.forEach(c => c.terminate()); ws.close(); await new Promise<void>(resolve => server.close(() => resolve())); await settingsWriter.catch(() => {}); } };
 }
 export async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = []; let size = 0;
