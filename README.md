@@ -13,9 +13,10 @@ A quiet workspace for following a real conversation. Put your phone on speaker b
 - Streams microphone PCM to a dedicated transcription session, with partial captions that are replaced by the final text.
 - Offers compatible account models through a maintained capability allowlist, with explicit output timing and availability status.
 - Segments speech on the client, keeps a short prefix, and commits long utterances regularly.
-- Saves an incremental UTF-8 transcript and a continuous encoded recording directly into a folder you choose outside all Git worktrees.
-- Keeps the same timeline and file pair during model switches. Shows pending/switching states and bounds the audio buffer.
+- Saves three files per completed session in your chosen folder: an incremental TXT transcript, the original WebM recording, and an MP3 generated asynchronously after recording ends. Browser format fallbacks retain their original extension.
+- Keeps the same timeline, transcript, and original recording during model switches. Shows pending/switching states and bounds the audio buffer.
 - Provides readable captions, adjustable font size, microphone level, pauseable auto-follow, copying and file downloads.
+- Remembers microphone, model, recognition, and display choices in the same local configuration file as the save folder.
 - Keeps the long-lived API key on the local backend. No account system, database, screen sharing, virtual soundcard or telephone integration is required.
 
 This is a working implementation with offline mock coverage, **not a claim of measured recognition quality**. Actual model access, microphone capture, speakerphone quality, Indian English recognition, playable recordings and hour-long sessions require the [local acceptance checks](docs/MANUAL_ACCEPTANCE.md). No accent accuracy or zero-latency guarantee is made.
@@ -158,7 +159,7 @@ Automatic gain is on; noise suppression and echo cancellation default off becaus
 
 ## Your session files
 
-All formal outputs are flat in the selected folder. TXT and original audio are written during capture; after a successful audio finalization, a local background worker generates an additional MP3 with the same basename:
+Each completed session normally produces three files in the same folder with the same basename. TXT and original audio are written during capture; MP3 is generated asynchronously after the original audio has been finalized:
 
 ```text
 2026-10-23_20-48-15+1100.txt
@@ -166,7 +167,7 @@ All formal outputs are flat in the selected folder. TXT and original audio are w
 2026-10-23_20-48-15+1100.mp3
 ```
 
-The example is synthetic. UTC offsets and fixed-width date/time fields use the machine's local timezone. Same-second collisions use the same incremental suffix on all session files, e.g. `…+1100-1.txt` and `…+1100-1.webm`; exclusive creation protects existing files. Extension follows the actual supported MIME type: WebM/Opus → `.webm`, MP4 → `.m4a`, Ogg/Opus → `.ogg`. Renaming WebM does not convert it to WAV.
+The example is synthetic. UTC offsets and fixed-width date/time fields use the machine's local timezone. Same-second collisions use the same incremental suffix on all session files, e.g. `…+1100-1.txt`, `…+1100-1.webm`, and `…+1100-1.mp3`; exclusive creation protects existing files. Extension follows the actual supported MIME type: WebM/Opus → `.webm`, MP4 → `.m4a`, Ogg/Opus → `.ogg`. Renaming WebM does not convert it to WAV.
 
 - TXT is saved incrementally as results change, including clearly marked `[PROVISIONAL]` text. Final text replaces its partial at the same sequence position. Updates coalesce, sync a `.txt.tmp` file and rename it into place; no permanent JSON/JSONL sidecar is created.
 - Recording includes natural pauses from the same microphone stream. MediaRecorder chunks are appended in order to a single `.webm.part` (or corresponding format) directly in your selected folder; chunks are not assumed independently playable. A final audio-name reservation prevents collisions. Only a successful encoder/upload/flush and backend finalization marks audio **Saved** and renames the part file.
@@ -176,13 +177,13 @@ The example is synthetic. UTC offsets and fixed-width date/time fields use the m
 
 ### Quiet background MP3 generation
 
-MP3 uses mono, 24 kHz, 48 kbps (about 22 MB/hour, plus small overhead). The original recording and its current bitrate remain unchanged. This is an extra lossy convenience copy for sharing; it does not improve the source quality. The app does not add MP3 progress indicators, failure banners, or retry dialogs. The existing audio download continues to return the original recording; the MP3 appears directly in the same save folder.
+After Stop finishes saving the original audio, a local FFmpeg worker generates the MP3 in the background. You can start another session without waiting. The worker starts no new conversion during an active session; a conversion already running continues at low priority. The real-time OpenAI audio path is unchanged.
 
-Only sessions created by this version register conversion intents. There is no scan, import, or backfill of historical recordings. Intents live in `mp3-jobs/` beside `settings.json`, with source paths and retry metadata but no audio/transcript contents. Intents are synced before capture starts; a finalized, nonempty source without its `.part` sibling is eligible. Incomplete recordings are retained but are not converted.
+MP3 uses mono, 24 kHz, 48 kbps (about 22 MB/hour). The worker validates a temporary output before publishing the MP3 alongside the TXT and original audio. It preserves the originals and never overwrites an existing MP3. The existing audio download returns the original recording; find the MP3 in the save folder.
 
-The worker runs one low-priority FFmpeg child at a time with one codec thread, and starts no new conversion while a session is connecting, recording, or finishing. A conversion already running can finish at low priority. CPU/disk sharing still has a cost; no zero-impact latency guarantee is made. Conversion and a full decode check occur on a private temporary file before publishing the MP3. Publication refuses existing destinations; hard links publish on compatible filesystems, with an exclusive short-lived reservation followed by rename on exFAT and other filesystems without hard links. Interrupted reservations identified as this job's own can be recovered. Source audio and TXT are never modified or deleted by the queue.
+Only new sessions are queued; historical recordings are not scanned. Pending tasks are saved in `mp3-jobs/` beside `settings.json`. Failures retry silently after 1 minute, 5 minutes, and 30 minutes, then daily. Details go only to backend logs, with no MP3 progress indicators, failure banners, or dialogs. A missing drive or other persistent problem must be resolved before conversion can succeed.
 
-Failures retry after 1 minute, 5 minutes, and 30 minutes, then once every 24 hours without a maximum attempt count. Technical details go only to local backend stderr. Missing drives, full disks, invalid audio, and missing executables do not block captions or starting another session. An unrecoverable condition cannot produce an MP3 until corrected; the original files remain available. The worker checks pending intents every 30 seconds while the backend runs. Closing the webpage does not stop the backend worker. Stopping the backend aborts conversion and retains its intent; the next backend start resumes pending new-session work with its retry schedule. An unavailable drive is retried without reselecting the recording folder. A shutdown or power failure can leave temporary files or reservations; no normal-completion guarantee is made after storage failure. One backend instance should own a configuration directory.
+Closing the webpage does not stop conversion while the backend is running. Stopping the backend interrupts conversion; the next start resumes pending tasks. Keep one backend instance per configuration directory.
 
 Timestamps are **approximate segment starts from the microphone sample clock**, relative to capture start. They are not network arrival times, speaker timestamps or word-level alignment. No confidence percentage or speaker identity is invented.
 
@@ -200,6 +201,8 @@ Microphone → AudioWorklet → stateful resampling → client speech gate
 Same microphone → MediaRecorder → independent bounded HTTP chunk queue
                                          ↓ local backend
                                selected external folder / audio.part
+                                         ↓ finalized original audio
+                               local background FFmpeg → same-name MP3
 ```
 
 The browser does not play captured audio. The backend constructs all OpenAI requests; the browser cannot specify upstream URLs or authentication. Recognition audio is sent to OpenAI: **this is not offline transcription**. Encoded recordings and MP3 conversion stay on the local machine and are not sent to any other service by ClearScribe. The 24 kHz PCM recognition path and its bandwidth are unchanged.
