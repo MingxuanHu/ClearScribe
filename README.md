@@ -63,6 +63,8 @@ Keep `node_modules` and the executable with this Node application when deploying
 
 ## Remembered save folder and preferences
 
+Use **Open in Finder** (macOS) or **Open in File Explorer** (Windows) beside **Save location** to open the current save folder, including during recording. This does not change the folder or any saved preferences; **Change save folder** remains a separate action. The open button is disabled until a folder is selected.
+
 Choosing a folder saves its canonical absolute path immediately to a local `settings.json` file. The next `npm start` or `npm run dev` restores it, including after reboot. Default locations:
 
 | Platform | Settings file |

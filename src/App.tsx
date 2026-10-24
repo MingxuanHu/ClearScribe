@@ -30,6 +30,7 @@ export function App() {
   const [sampleRate, setSampleRate] = useState(0);
   const [following, setFollowing] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [openingFolder, setOpeningFolder] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
   const capture = useRef<Capture | undefined>(undefined);
   const socket = useRef<WebSocket | undefined>(undefined);
@@ -270,12 +271,20 @@ export function App() {
     try { const response = await api('/api/folder', { method: 'POST' }); setBoot(b => b && { ...b, folder: response.folder }); }
     catch (e) { setMessage((e as Error).message); } finally { setBusy(false); }
   }
+  async function openSaveFolder() {
+    if (!boot?.folder || openingFolder) return;
+    setOpeningFolder(true); setMessage('');
+    try { await api('/api/folder/open', { method: 'POST' }); }
+    catch (error) { setMessage((error as Error).message); }
+    finally { setOpeningFolder(false); }
+  }
   async function copy() {
     try { await navigator.clipboard.writeText(transcriptText(segments, startDate.current || 'Restored local session', notes.current)); setWarning('Transcript copied. Unconfirmed text is marked PROVISIONAL.'); }
     catch { setMessage('Clipboard access denied. Use Download TXT.'); }
   }
   const microphoneMissing = !!deviceId && !devices.some(device => device.deviceId === deviceId);
   const selectedMissing = catalog && !catalog.models.some(m => m.id === model);
+  const folderOpenLabel = boot?.platform === 'darwin' ? 'Open in Finder' : boot?.platform === 'win32' ? 'Open in File Explorer' : 'Open folder';
   const canStart = !!boot?.keyConfigured && !!boot.folder && !selectedMissing && !!catalog?.models.length && !busy;
   const finalized = segments.filter(s => s.final && s.text).length;
   return <main className="shell">
@@ -286,7 +295,7 @@ export function App() {
       <aside className="setup" inert={!boot && !preview}><div className="panel-heading"><span className="eyebrow">YOUR SETUP</span><span className="step-chip">01 / READY</span></div>
         <div className="field-section"><div className="label-row"><label htmlFor="mic">Microphone</label><span className="field-icon">◉</span></div><select id="mic" value={deviceId} onChange={e => setDeviceId(e.target.value)} disabled={active}><option value="">System default microphone</option>{microphoneMissing && <option value={deviceId}>Saved microphone — reconnect or choose another</option>}{devices.map((d, i) => <option value={d.deviceId} key={d.deviceId || i}>{d.label || `Microphone ${i + 1}`}</option>)}</select><p className="hint">Choose your Mac’s built-in microphone. Place your phone on speaker nearby.</p></div>
         <div className="field-section"><div className="label-row"><label htmlFor="model">Transcription model</label><button className="text-button" disabled={busy || preview} onClick={() => void refreshModels()} aria-label="Refresh models">↻ Refresh models</button></div><select id="model" value={model} onChange={e => chooseModel(e.target.value)} disabled={preview || phase === 'Connecting' || phase === 'Stopping' || phase === 'Switching'}>{preview && <option value="gpt-live-transcribe">gpt-live-transcribe · preview</option>}{selectedMissing && <option value={model}>{model} — unavailable; choose a model</option>}{catalog?.models.map(m => <option value={m.id} key={m.id}>{m.id}{m.availability === 'unconfirmed' ? ' · unconfirmed' : ''}</option>)}</select><p className="model-description">{preview ? 'Synthetic text · no active model' : catalog?.models.find(m => m.id === model)?.timing || 'Waiting for compatible models'}</p><p className="hint catalog-status">{preview ? 'This is a visual fixture. Open the normal page for real transcription.' : catalog?.message || 'Loading the account model list…'}{catalog?.checkedAt && <span> {catalog.stale ? 'Stale · ' : 'Checked · '}{new Date(catalog.checkedAt).toLocaleTimeString()}</span>}</p>{pendingModel && <p className="hint highlight">Pending: {pendingModel}. Switching at the next speech boundary.</p>}</div>
-        <div className="field-section"><div className="label-row"><label>Save location</label><span className="field-icon">⌑</span></div><button className="folder-button" disabled={active || busy || preview} onClick={() => void pickFolder()}><span>▱</span> {boot?.folder ? 'Change save folder' : 'Choose save folder'} <span>↗</span></button><p className="folder-path">{boot?.folder?.path || 'Choose a folder outside all Git projects.'}</p><p className="hint">Transcript + original audio.<br/>MP3 follows automatically in the same folder.</p></div>
+        <div className="field-section"><div className="label-row"><label>Save location</label><button className="text-button" disabled={!boot?.folder || busy || openingFolder || preview || !['darwin', 'win32'].includes(boot?.platform || '')} onClick={() => void openSaveFolder()} title="Open the current save folder without changing it.">{openingFolder ? 'Opening…' : folderOpenLabel}</button></div><button className="folder-button" disabled={active || busy || openingFolder || preview} onClick={() => void pickFolder()}><span>▱</span> {boot?.folder ? 'Change save folder' : 'Choose save folder'} <span>↗</span></button><p className="folder-path">{boot?.folder?.path || 'Choose a folder outside all Git projects.'}</p><p className="hint">Transcript + original audio.<br/>MP3 follows automatically in the same folder.</p></div>
         <details className="advanced" open={advancedOpen} onToggle={event => updatePreferences({ advancedOpen: event.currentTarget.open })}><summary>Fine-tune recognition <span>＋</span></summary><label htmlFor="terms">Terms · one per line</label><textarea id="terms" maxLength={4096} value={keywords} onChange={e => setKeywords(e.target.value)} disabled={active} rows={5}/><label htmlFor="context">Short context · max 400 characters</label><textarea id="context" value={context} maxLength={400} onChange={e => setContext(e.target.value)} disabled={active} rows={3}/><p className="hint">Recognition hints only. These should never add words that were not spoken.</p><label htmlFor="delay">Live model delay</label><select id="delay" value={delay} onChange={e => setDelay(e.target.value as 'low' | 'medium')} disabled={active}><option value="low">Low · earlier partial text</option><option value="medium">Medium · more audio context</option></select><label htmlFor="threshold">Speech threshold · {threshold.toFixed(3)}</label><input id="threshold" type="range" min="0.002" max="0.04" step="0.001" value={threshold} disabled={active} onChange={e => setThreshold(Number(e.target.value))}/>{[['Noise suppression', noise, setNoise], ['Automatic gain', gain, setGain], ['Echo cancellation', echo, setEcho]].map(([name, value, setter]) => <label className="checkbox" key={String(name)}><input type="checkbox" checked={value as boolean} disabled={active} onChange={e => (setter as (v: boolean) => void)(e.target.checked)}/>{name as string}</label>)}<p className="hint">Speakerphone audio is wanted speech. Try suppression off first; compare using your actual phone.</p></details>
         <div className="cloud-note"><span>⌁</span><p>Runs locally. Audio is sent to OpenAI for recognition. API usage is billed separately.</p></div>
       </aside>

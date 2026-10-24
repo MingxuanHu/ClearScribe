@@ -11,7 +11,8 @@ import { readSettings, writeSettings, type Settings } from './settings.js';
 import { DEFAULT_PREFERENCES, parsePreferencePatch } from '../shared/preferences.js';
 import { CallSession, ConnectionError, type UpstreamFactory } from './session.js';
 import { Mp3Queue } from './mp3.js';
-export interface AppOptions { settingsFile?: string; port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; upstream?: UpstreamFactory; request?: typeof fetch }
+import { openFolder } from './folder.js';
+export interface AppOptions { settingsFile?: string; port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; openFolder?: typeof openFolder; upstream?: UpstreamFactory; request?: typeof fetch }
 export function createApp(options: AppOptions) {
   const token = randomBytes(32).toString('hex');
   const catalog = new ModelCatalog(options.key, options.request);
@@ -41,6 +42,7 @@ export function createApp(options: AppOptions) {
     }
   })();
   let picking = false;
+  let openingFolder = false;
   let active: CallSession | undefined;
   let owner: WebSocket | undefined;
   let lastFiles: CallFiles | undefined;
@@ -78,8 +80,26 @@ export function createApp(options: AppOptions) {
           json(res, 200, { preferences: settings.preferences }); return;
         }
         if (url.pathname === '/api/models' && req.method === 'GET') { json(res, 200, await catalog.list(url.searchParams.get('refresh') === '1')); return; }
+        if (url.pathname === '/api/folder/open' && req.method === 'POST') {
+          if (!folder) { json(res, 409, { error: 'Choose a save folder before opening it.' }); return; }
+          if (picking || openingFolder) { json(res, 409, { error: 'Finish the current folder action first.' }); return; }
+          openingFolder = true;
+          try {
+            // Only the server's selected folder may be opened; never accept a client path.
+            const selected = folder.path;
+            try {
+              if (await realpath(selected) !== selected || !(await stat(selected)).isDirectory()) throw new Error('Folder changed');
+            } catch {
+              json(res, 404, { error: 'The save folder is unavailable or has changed. Reconnect the drive or select the folder again.' }); return;
+            }
+            try { await (options.openFolder || openFolder)(selected); }
+            catch { json(res, 503, { error: 'Could not open the save folder in the file manager. Try again or open it manually.' }); return; }
+            json(res, 200, { ok: true });
+          } finally { openingFolder = false; }
+          return;
+        }
         if (url.pathname === '/api/folder' && req.method === 'POST') {
-          if (starting || picking || (active && active.phase !== 'stopped')) { json(res, 409, { error: 'Finish the current call or folder dialog first.' }); return; }
+          if (starting || picking || openingFolder || (active && active.phase !== 'stopped')) { json(res, 409, { error: 'Finish the current call or folder action first.' }); return; }
           picking = true;
           try {
             const selected = await (options.picker || chooseFolder)();

@@ -52,3 +52,9 @@ These are manual acceptance checks; automated mocks do not establish actual brow
 - [ ] Remove the chosen microphone or make the model unavailable. Confirm the saved selection is retained and no automatic substitute is used. Test the system-default microphone choice separately.
 - [ ] Disconnect the recording drive, restart, and verify preferences still restore. Change font size and confirm the saved directory path remains intact.
 - [ ] Temporarily deny configuration-directory writes. Verify the previous file remains intact, pending preference edits retry, and successful recovery clears only the preference-save warning. MP3 failures must continue to produce no UI notifications.
+
+## Open save folder
+
+- [ ] With no selected folder, confirm the open-folder button is disabled. Choose a folder and verify **Open in Finder** on macOS or **Open in File Explorer** on Windows opens that exact folder without a selection dialog.
+- [ ] Open the folder while recording and after Stop. Verify capture continues normally and saved folder/preferences remain unchanged. **Change save folder** must continue to open the existing selection dialog when idle.
+- [ ] Remove/disconnect the save folder and click Open. Confirm a useful error appears, the saved path is preserved, and reconnecting the drive allows a later retry.

@@ -17,6 +17,7 @@ async function fixture(opts: { missingKey?: boolean; omitFinal?: boolean; switch
   const fake = new WebSocketServer({ host: '127.0.0.1', port: 0 }); await once(fake, 'listening');
   const fakePort = (fake.address() as { port: number }).port;
   const events: any[] = []; let connections = 0; let cancelled = false;
+  const openedFolders: string[] = [];
   fake.on('connection', peer => {
     const connection = ++connections; let item = 1; let hasDelta = false;
     peer.on('message', raw => {
@@ -37,6 +38,7 @@ async function fixture(opts: { missingKey?: boolean; omitFinal?: boolean; switch
   const options: AppOptions = { port: 0, project, key: opts.missingKey ? '' : 'obviously-fake-test-key',
     settingsFile: opts.mp3 ? path.join(root, 'config', 'settings.json') : undefined,
     picker: async () => cancelled ? null : folder,
+    openFolder: async selected => { openedFolders.push(selected); },
     upstream: () => {
       const socket = new WebSocket(`ws://127.0.0.1:${fakePort}`);
       if (opts.backpressure) Object.defineProperty(socket, 'bufferedAmount', { get: () => 300000 });
@@ -73,7 +75,7 @@ async function fixture(opts: { missingKey?: boolean; omitFinal?: boolean; switch
   async function cleanup() {
     client.terminate(); await app.close(); fake.clients.forEach(c => c.terminate()); await new Promise<void>(resolve => fake.close(() => resolve())); await chmod(folder, 0o700).catch(() => {}); await rm(root, { recursive: true, force: true });
   }
-  return { root, folder, project, app, fake, base, api, boot, client, inbox, events, wait, send, start, audio, recording, cleanup, cancel: () => { cancelled = true; }, connections: () => connections };
+  return { root, folder, project, app, fake, base, api, boot, client, inbox, events, openedFolders, wait, send, start, audio, recording, cleanup, cancel: () => { cancelled = true; }, connections: () => connections };
 }
 
 test('Stop commits last speech, waits for final and makes exactly two output files; repeat call gets new ID', async () => {
@@ -81,6 +83,8 @@ test('Stop commits last speech, waits for final and makes exactly two output fil
   try {
     f.start(); const ready = await f.wait('ready');
     await f.audio(ready.sessionId); assert.equal((await f.recording(ready.sessionId)).status, 200);
+    assert.equal((await f.api('/api/folder/open', { method: 'POST' })).status, 200);
+    assert.deepEqual(f.openedFolders, [f.folder]);
     f.send({ type: 'stop', sessionId: ready.sessionId, audioComplete: true });
     const stopped = await f.wait('stopped'); assert.equal(stopped.segments[0].text, 'Synthetic final 1.1.');
     assert.equal(stopped.files.audioSaved, true); assert.equal(stopped.files.txtSaved, true);
