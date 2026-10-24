@@ -39,3 +39,15 @@ Opened the real development UI in the Codex in-app browser and checked the initi
 Actual account/model access and API events, native macOS picker behavior/OS permission prompts, current Chrome microphone/MediaRecorder/AudioWorklet behavior, Indian English/telephony recognition, final playable audio, disk-full or detached-drive behavior, real network outages, model switching under real latency and a one-hour call across automatic rotation remain untested. Recording-on/off latency/resource comparison is also outstanding. Follow [MANUAL_ACCEPTANCE.md](MANUAL_ACCEPTANCE.md) before treating the app as validated for important calls.
 
 Secret scanning and filename inventory cannot prove the absence of all private text, copyrighted content or novel secret formats; review public files/screenshots manually before publishing. Do not describe offline mock success as real audio accuracy or guaranteed reliability.
+
+## Feature delivery verification — 2026-10-24
+
+Scope: the custom favicon, additional asynchronous MP3 exports, shared saved preferences, native save-folder opening, and the documented PR/CI merge workflow.
+
+- `npm ci`, `npm run check` (54 tests, zero failures/skips, TypeScript and production builds), and `npm run licenses` passed on macOS arm64 with Node.js 24.8.0.
+- The final review corrected MP3 finalization to open its temporary file with write access before syncing; Windows `FlushFileBuffers` requires a writable handle. This is a code correction, not a claim of Windows hardware testing.
+- Official gitleaks 8.30.1 was checked against its published SHA-256 checksum. The unchanged `npm run secrets` scanner passed in a clean local release checkout containing the committed deliverables, complete feature history, and current client/backend build outputs. The workstation's ignored local `.env` remained private and unchanged.
+- Browser inspection used isolated synthetic settings to check preference restoration and the separate open-folder button. Automated integration tests cover opening the selected folder during a mock transcription session, authentication/CSRF, unavailable or redirected folders, retries, and unchanged saved settings.
+- Real microphone/OpenAI latency and Windows native file-manager behavior remain manual acceptance items. No audio-quality or zero-impact latency claim is made.
+
+The earlier verification sections above are the original dated record, not the current test count or an assertion that cloud CI has never run.
