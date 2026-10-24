@@ -4,6 +4,8 @@ Use Node.js 22.12+ (Node 24 recommended) and npm. Run `npm ci`, then `npm run de
 
 Before submitting changes, run `npm run check`, `npm run licenses`, and `npm run secrets` with gitleaks installed. Tests use synthetic text/bytes and a local mock WebSocket server; no OpenAI account or key is needed. Do not add real calls, interview content, credentials or recordings to tests or issues.
 
+Follow the [feature delivery and merge workflow in AGENTS.md](AGENTS.md#feature-delivery-and-merge-workflow): push a feature branch, open a PR to `main`, and merge only after the current PR revision passes CI and all repository merge requirements. The `Offline checks` workflow runs on pushes and pull requests. Its `check` job must be required by GitHub branch protection or an effective ruleset; a passing local run alone is insufficient. Development-only or user-testing instructions defer publication and merging.
+
 Keep the app focused on English captions: no assistant responses, speaker guesses, translation, rewriting or generated audio. Add a model only after reviewing the official dedicated transcription guide, implementing its adapter and meaningful lifecycle tests, and documenting output timing and limitations. Do not accept models by name regex or SDK enum alone.
 
 Keep filesystem writes outside all Git worktrees. Preserve bounded audio and recording queues, session isolation, incremental text saving and explicit failures. Review the checklist in `docs/MANUAL_ACCEPTANCE.md` for changes involving browser audio or lifecycle behavior.

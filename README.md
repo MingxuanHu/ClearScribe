@@ -267,7 +267,7 @@ See [verification details](docs/VERIFICATION.md), [official API decisions](docs/
 2. Inspect `git status`, tracked files, the staged diff and history. Ensure no environment files, keys, private audio or transcript exports are tracked. Revoke/replace any exposed key before attempting cleanup or publication.
 3. Run `npm ci`, `npm run check`, `npm run licenses` and `npm run secrets`. Review failures; a scanner pass does not prove absolute safety.
 4. Review [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md). This selected project name does not assert global uniqueness or trademark clearance.
-5. Create the remote repository manually, replace the clone placeholder, enable private security reporting if desired, review/stage/commit the intended public files, add your remote and push yourself. No remote repository, push, release or deployment is created by this project-generation task.
+5. For feature delivery, follow the [workflow in AGENTS.md](AGENTS.md#feature-delivery-and-merge-workflow): push the feature branch, open a PR to `main`, require successful current CI checks, and then merge through the PR. Verify that GitHub branch protection or a ruleset actually enforces the `check` status before merging. Release tags, package publication, and hosted deployment require their own explicit scope.
 
 ## License
 
