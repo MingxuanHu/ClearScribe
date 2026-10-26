@@ -157,6 +157,8 @@ Listing permission denied: compatible candidates are marked **unconfirmed** and 
 
 Live-model delay defaults to **low**; **medium** supplies more context at the expense of earlier text. Context and terms are recognition hints, never a request to generate missing content. The UI conservatively limits context to 400 characters, 40 terms and 60 characters per term. Terms cannot contain angle brackets or embedded newlines. English uses `languages: ["en"]`; the legacy singular field is not sent.
 
+The caption footer shows **First caption: ~N ms** for the latest segment whose first nonempty text has rendered. Green (acceptable) means up to 1,000 ms, yellow (medium) means 1,001–2,000 ms, and red (large) means above 2,000 ms. These are UI thresholds, not service guarantees. The estimate uses the browser's monotonic clock from the beginning of the audio block that triggers speech detection to the first React render containing that segment's text, excluding the retained silence prefix. It includes network, model processing, and model-switch waiting time. Later partial updates and finalization do not replace the measurement. Models that return text only after commit include the speech duration and silence wait in this number. Long continuous speech is split into segments, each with its own measurement. This is approximate: microphone hardware latency, audio worklet delivery scheduling, detection accuracy, and the final screen paint are not precisely measured. The value stays visible during silence and resets to a dash for each new session; it is not saved in transcripts or preferences.
+
 Automatic gain is on; noise suppression and echo cancellation default off because the phone speaker is wanted input. Adjust these in **Fine-tune recognition** using your actual setup. The energy gate defaults to 0.008 normalized RMS, with 300 ms pre-roll, 850 ms end silence and a 25-second maximum turn. A low-volume phone may require a lower threshold or closer placement. This gate is a simple, tunable heuristic; background sound may trigger false speech.
 
 ## Your session files
@@ -258,6 +260,8 @@ npm run secrets
 ```
 
 `npm run check` runs types, all tests and the production build. Tests use synthetic content and local mock WebSocket servers. They do not require an API key, contact OpenAI, or upload recordings. CI uses read-only permissions, verified pinned actions and checksum-verified gitleaks. It runs no microphone tests and publishes no private artifacts.
+
+`npm run secrets` scans tracked and unignored deliverables, built client/backend assets, the staged patch, and all Git history. Ignored, untracked local configuration such as `.env` is excluded from the publication scan. Tracked or unignored private environment files still block delivery, and secrets copied into built assets or staged content remain subject to scanning. Git ignore rules do not protect files that are already tracked.
 
 For a clearly labeled **synthetic layout preview only**, run the development server and open `http://127.0.0.1:5173/?preview=1`. It creates no microphone or OpenAI session; Start is disabled. This development-only fixture is not simulated recognition and is omitted from production behavior.
 

@@ -3,7 +3,7 @@ import { Resampler, Segmenter, base64PCM } from '../shared/audio';
 export interface CaptureOptions {
   deviceId: string; noiseSuppression: boolean; autoGainControl: boolean; echoCancellation: boolean;
   threshold: number; token: string;
-  onAudio: (audio: { audio: string; begin: boolean; end: boolean; startSample: number }) => void;
+  onAudio: (audio: { audio: string; begin: boolean; end: boolean; startSample: number; speechStartedAt?: number }) => void;
   onLevel: (level: number, samples: number) => void;
   onWarning: (message: string) => void;
   onFatal: (message: string) => void;
@@ -50,11 +50,13 @@ export class Capture {
         if (event.data === 'flushed') { this.flushResolve?.(); return; }
         if (!this.enabled) return;
         const input = event.data as Float32Array;
+        const blockStartedAt = performance.now() - input.length / this.sampleRate * 1000;
         const pcm = this.resampler!.push(input);
         const turn = this.segmenter.push(pcm);
         const rms = Math.sqrt(input.reduce((sum, x) => sum + x * x, 0) / Math.max(1, input.length));
         this.options.onLevel(Math.min(1, rms * 8), this.segmenter.position);
-        if (turn) this.options.onAudio({ audio: base64PCM(turn.pcm), begin: turn.begin, end: turn.end, startSample: turn.startSample });
+        if (turn) this.options.onAudio({ audio: base64PCM(turn.pcm), begin: turn.begin, end: turn.end, startSample: turn.startSample,
+          speechStartedAt: turn.begin ? blockStartedAt : undefined });
       };
       // Verify browser audio permission before opening a paid upstream session.
       if (!await within(this.context.resume(), 2500) || this.context.state !== 'running') {
