@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Capture } from './capture';
+import { CaptionDelay, delaySeverity } from './caption-delay';
 import { timestamp, transcriptText, type Segment } from '../shared/transcript';
 import type { ModelList } from '../server/models';
 import { DEFAULT_PREFERENCES, parsePreferencePatch, type Preferences } from '../shared/preferences';
@@ -27,6 +28,8 @@ export function App() {
   const [warning, setWarning] = useState('');
   const [level, setLevel] = useState(0);
   const [samples, setSamples] = useState(0);
+  const [captionDelay, setCaptionDelay] = useState<number>();
+  const captionTiming = useRef(new CaptionDelay());
   const [sampleRate, setSampleRate] = useState(0);
   const [following, setFollowing] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -132,6 +135,10 @@ export function App() {
     return () => { disposed = true; void preferenceSaver.current?.flush(); navigator.mediaDevices?.removeEventListener('devicechange', deviceChange); window.removeEventListener('beforeunload', unload); window.removeEventListener('pagehide', hide); document.removeEventListener('visibilitychange', visibility); };
   }, []);
   useEffect(() => { if (following && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight; }, [segments, following]);
+  useLayoutEffect(() => {
+    const latest = captionTiming.current.rendered(segments, performance.now());
+    if (latest !== undefined) setCaptionDelay(latest);
+  }, [segments]);
   function send(value: object) {
     if (socket.current?.readyState !== WebSocket.OPEN) return false;
     socket.current.send(JSON.stringify({ ...value, sessionId: sessionId.current })); return true;
@@ -148,9 +155,11 @@ export function App() {
       if (!speaking.current) requestSwitch(next);
     }
   }
-  function audio(data: { audio: string; begin: boolean; end: boolean; startSample: number }) {
+  function audio(data: { audio: string; begin: boolean; end: boolean; startSample: number; speechStartedAt?: number }) {
     speaking.current = !data.end;
-    const value = { type: 'audio', ...data };
+    const { speechStartedAt, ...payload } = data;
+    if (data.begin && speechStartedAt !== undefined) captionTiming.current.begin(data.startSample, speechStartedAt);
+    const value = { type: 'audio', ...payload };
     if (switching.current) {
       queuedBytes.current += data.audio.length * 0.75;
       if (queuedBytes.current > 24000 * 2 * 5) {
@@ -189,6 +198,7 @@ export function App() {
     const thisAttempt = ++attempt.current;
     stopping.current = false; switching.current = false; speaking.current = false; pending.current = '';
     queued.current = []; queuedBytes.current = 0; sessionId.current = ''; notes.current = [];
+    captionTiming.current = new CaptionDelay(); setCaptionDelay(undefined);
     setMessage(''); setWarning(''); setPendingModel(''); changePhase('Connecting');
     const mic = new Capture({ deviceId, noiseSuppression: noise, autoGainControl: gain, echoCancellation: echo, threshold, token: boot.token,
       onAudio: audio, onLevel: (value, position) => { setLevel(value); setSamples(position); },
@@ -305,7 +315,7 @@ export function App() {
           {!segments.some(s => s.text) ? <div className="empty-state"><div className="empty-glyph" aria-hidden="true"><i/><i/><i/><i/><i/><i/><i/></div><h2>{phase === 'Listening' ? 'Listening for your first words…' : phase === 'Connecting' ? 'Getting everything connected…' : 'Every word, a little clearer.'}</h2><p>{phase === 'Listening' ? 'Speak naturally. Your captions will appear here.' : 'Set up your microphone and save folder,\nthen start when you’re ready.'}</p><div className="empty-badges"><span>ENGLISH CAPTIONS</span><span>NO GENERATED REPLIES</span></div></div> : <div className="segments" style={{ fontSize }}>{segments.filter(s => s.text).map(s => <article className={`segment ${s.final ? '' : 'provisional'}`} key={s.seq}><div className="segment-meta"><time>{timestamp(s.startSample)}</time>{!s.final && <span>PROVISIONAL</span>}</div><p>{s.text}</p></article>)}</div>}
         </div>
         {!following && segments.length > 0 && <button className="jump" onClick={() => setFollowing(true)}>↓ Jump to latest</button>}
-        <div className="caption-bottom"><span><span className="tiny-dot"/> {finalized} finalized segments</span><span>Approximate segment timestamps</span></div>
+        <div className="caption-bottom"><span><span className="tiny-dot"/> {finalized} finalized segments</span><span className={`caption-delay ${captionDelay === undefined ? '' : delaySeverity(captionDelay)}`} title="Estimated detected speech start to first caption render for the latest segment. Green: ≤1,000 ms; yellow: ≤2,000 ms; red: >2,000 ms. Includes network and model waiting time; excludes unknown microphone hardware latency.">First caption: {captionDelay === undefined ? '—' : `~${captionDelay.toLocaleString()} ms · ${delaySeverity(captionDelay)}`}</span></div>
       </section>
     </div>
     {(message || warning || (boot && (!boot.keyConfigured || !boot.folder || selectedMissing))) && <div className={`notice ${message || !boot?.keyConfigured ? 'notice-error' : ''}`} role="status">{message || (!boot?.keyConfigured ? 'Before starting: copy .env.example to .env, set OPENAI_API_KEY locally, and restart the backend. Never share your key here.' : warning || (!boot?.folder ? 'Before starting: choose a writable save folder outside all Git projects.' : selectedMissing ? 'Your preferred model is unavailable. Select a compatible model from the refreshed list.' : ''))}</div>}

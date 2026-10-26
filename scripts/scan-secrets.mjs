@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, copyFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 const binary = process.env.GITLEAKS_BIN || 'gitleaks';
@@ -24,12 +24,11 @@ try {
   }
   scan(['dir', stage]);
   for (const directory of ['dist', 'server-dist']) if (existsSync(directory)) scan(['dir', directory]);
-  for (const file of readdirSync('.').filter(f => /^\.env(?:\.|$)/.test(f) && f !== '.env.example')) scan(['dir', file]);
   scan(['git', '--log-opts=--all', '.']);
   // Index contents can differ from working files; scan the complete staged patch as well.
   const diff = execFileSync('git', ['diff', '--cached', '--no-ext-diff'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const result = spawnSync(binary, ['stdin', ...base], { input: diff, stdio: ['pipe', 'inherit', 'inherit'] });
   if (result.status !== 0) throw new Error('Staged diff scan failed.');
-  console.log('Secret scan passed: deliverables, built assets, local environment files if present, all Git history, and staged diff. Private-media filename inventory passed.');
+  console.log('Secret scan passed: deliverables, built assets, all Git history, and staged diff. Ignored, untracked local configuration is excluded; tracked or unignored private files are rejected. Private-media filename inventory passed.');
 } catch (error) { console.error(error.message); process.exitCode = 1; }
 finally { rmSync(stage, { recursive: true, force: true }); }
