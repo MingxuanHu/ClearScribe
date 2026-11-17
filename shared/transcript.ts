@@ -1,5 +1,5 @@
 export interface Segment {
-  seq: number; itemId?: string; startSample: number; text: string; final: boolean;
+  seq: number; itemId?: string; startSample: number; text: string; final: boolean; firstCaptionMs?: number;
 }
 export const RATE = 24000;
 export function timestamp(samples: number): string {
@@ -10,7 +10,7 @@ export function timestamp(samples: number): string {
 export function transcriptText(segments: Segment[], started: string, notices: string[] = []): string {
   return `ClearScribe\nStarted: ${started}\nApproximate segment times; no speaker labels.\n${notices.map(n => `Notice: ${n}\n`).join('')}\n` +
     [...segments].sort((a, b) => a.seq - b.seq).filter(s => s.text.trim()).map(s =>
-      `[${timestamp(s.startSample)}] ${s.final ? '' : '[PROVISIONAL] '}${s.text}\n`).join('\n');
+      `[${timestamp(s.startSample)}] [First caption: ${s.firstCaptionMs === undefined ? 'unavailable' : `~${s.firstCaptionMs} ms`}] ${s.final ? '' : '[PROVISIONAL] '}${s.text}\n`).join('\n');
 }
 /** Owns each item exactly once. Completion replaces partial text, including empty completion. */
 export class Transcript {

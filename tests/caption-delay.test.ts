@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptionDelay, delaySeverity } from '../src/caption-delay.js';
-import type { Segment } from '../shared/transcript.js';
+import { transcriptText, type Segment } from '../shared/transcript.js';
 
 const segment = (startSample: number, text = 'Hello', final = false): Segment => ({ seq: startSample + 1, startSample, text, final });
 
@@ -31,4 +31,17 @@ test('new session resets timing and thresholds include their upper boundary', ()
   assert.equal(delaySeverity(1001), 'medium');
   assert.equal(delaySeverity(2000), 'medium');
   assert.equal(delaySeverity(2001), 'large');
+});
+
+test('records every segment once, including older results, for TXT export', () => {
+  const timing = new CaptionDelay();
+  const older = segment(0); const newer = segment(24000);
+  timing.begin(0, 100); timing.begin(24000, 200);
+  const record = (s: Segment, ms: number) => { s.firstCaptionMs = ms; };
+  assert.equal(timing.rendered([newer], 800, record), 600);
+  assert.equal(timing.rendered([older, newer], 900, record), undefined);
+  timing.rendered([older, newer], 5000, record);
+  assert.equal(older.firstCaptionMs, 800);
+  assert.equal(newer.firstCaptionMs, 600);
+  assert.match(transcriptText([older, newer], 'test'), /\[00:00:00\] \[First caption: ~800 ms\]/);
 });

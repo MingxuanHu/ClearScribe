@@ -201,7 +201,8 @@ export function createApp(options: AppOptions) {
       }
       if (!active || active.phase === 'stopped' || m.sessionId !== active.id) { sendError('No matching active call.'); return; }
       try {
-        if (m.type === 'audio') active.audio(m);
+        if (m.type === 'captionTiming') active.captionTiming(m.seq, m.ms);
+        else if (m.type === 'audio') active.audio(m);
         else if (m.type === 'switch' && compatible(m.model)) void active.switchModel(m.model).catch(() => active?.fault('Invalid model switch state.'));
         else if (m.type === 'stop') void active.stop(m.audioComplete === true);
         else throw new Error('Unknown command');

@@ -16,7 +16,7 @@ test('partials merge, final replaces, out-of-order completion sorts by sample se
   t.event('call', { item_id: 'a', delta: 'late partial' }, 1);
   assert.deepEqual(t.segments.map(s => [s.text, s.final]), [['First synthetic sentence.', true], ['Second synthetic sentence.', true]]);
   const output = transcriptText(t.segments, 'Synthetic test date +1100');
-  assert.ok(output.indexOf('First') < output.indexOf('Second')); assert.ok(output.includes('[00:00:04] Second'));
+  assert.ok(output.indexOf('First synthetic sentence.') < output.indexOf('Second synthetic sentence.')); assert.ok(output.includes('[00:00:04] [First caption: unavailable] Second'));
 });
 test('old sessions and duplicate ownership are rejected; empty final clears provisional', () => {
   const t = new Transcript('new'); t.begin(1, 0); t.begin(2, 24000);
@@ -26,7 +26,7 @@ test('old sessions and duplicate ownership are rejected; empty final clears prov
   t.event('new', { item_id: 'a', transcript: '' }, 1); assert.equal(t.segments[0].text, '');
 });
 test('TXT explicitly labels provisional text and preserves exact English and punctuation', () => {
-  assert.match(transcriptText([{ seq: 1, startSample: 3601 * RATE, text: 'Synthetic: café; Java—yes.', final: false }], 'test'), /\[01:00:01\] \[PROVISIONAL\] Synthetic: café; Java—yes\./);
+  assert.match(transcriptText([{ seq: 1, startSample: 3601 * RATE, text: 'Synthetic: café; Java—yes.', final: false }], 'test'), /\[01:00:01\] \[First caption: unavailable\] \[PROVISIONAL\] Synthetic: café; Java—yes\./);
   assert.equal(timestamp(-1), '00:00:00'); assert.equal(timestamp(RATE * 3661), '01:01:01');
 });
 test('streaming resampling is block-invariant at 44.1kHz and conserves DC level', () => {
