@@ -202,6 +202,7 @@ export function App() {
     setMessage(''); setWarning(''); setPendingModel(''); changePhase('Connecting');
     const mic = new Capture({ deviceId, noiseSuppression: noise, autoGainControl: gain, echoCancellation: echo, threshold, token: boot.token,
       onAudio: audio, onLevel: (value, position) => { setLevel(value); setSamples(position); },
+      onInterruption: value => { notes.current.push(value); setWarning(value); },
       onWarning: value => { notes.current.push(value); setWarning(value); setFiles(previous => previous && { ...previous, audioFailed: true }); },
       onFatal: value => { notes.current.push(value); setWarning(value); void stop(); },
     });

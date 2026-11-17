@@ -57,3 +57,49 @@ test('blocked audio startup times out and releases microphone before a session c
     }
   }
 });
+
+test('digital silence warns once per interval and normal input resets detection', () => {
+  const warnings: string[] = [];
+  const capture = new Capture({ ...options(), onInterruption: message => warnings.push(message) });
+  const internals = capture as any;
+  capture.sampleRate = 10;
+  internals.checkSilence(new Float32Array(99));
+  assert.equal(warnings.length, 0);
+  internals.checkSilence(new Float32Array(1));
+  internals.checkSilence(new Float32Array(100));
+  assert.equal(warnings.length, 1);
+  internals.checkSilence(new Float32Array([0.001]));
+  internals.checkSilence(new Float32Array(100));
+  assert.equal(warnings.length, 2);
+});
+
+test('interrupted context resumes once and shutdown never restarts audio', async () => {
+  const warnings: string[] = []; let resumed = 0;
+  const internals = new Capture({ ...options(), onInterruption: message => warnings.push(message) }) as any;
+  internals.enabled = true;
+  internals.context = { state: 'suspended', async resume() { resumed++; this.state = 'running'; } };
+  await internals.recoverContext();
+  assert.equal(resumed, 1); assert.equal(warnings.length, 1);
+  internals.stopped = true; internals.context.state = 'suspended';
+  await internals.recoverContext(); assert.equal(resumed, 1);
+});
+
+test('wake lock acquired after shutdown is immediately released', async () => {
+  const names = ['navigator', 'document'] as const;
+  const originals = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  let released = 0; let resolveLock!: (lock: unknown) => void;
+  try {
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: { visibilityState: 'visible' } });
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { wakeLock: { request: () => new Promise(resolve => { resolveLock = resolve; }) } } });
+    const internals = new Capture(options()) as any; internals.enabled = true;
+    const pending = internals.keepAwake(); internals.stopped = true;
+    resolveLock({ release: async () => { released++; } });
+    await pending; assert.equal(released, 1); assert.equal(internals.wakeLock, undefined);
+  } finally {
+    for (const name of names) {
+      const descriptor = originals.get(name);
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  }
+});

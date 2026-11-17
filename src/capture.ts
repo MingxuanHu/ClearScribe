@@ -6,6 +6,7 @@ export interface CaptureOptions {
   onAudio: (audio: { audio: string; begin: boolean; end: boolean; startSample: number; speechStartedAt?: number }) => void;
   onLevel: (level: number, samples: number) => void;
   onWarning: (message: string) => void;
+  onInterruption?: (message: string) => void;
   onFatal: (message: string) => void;
 }
 export class Capture {
@@ -27,6 +28,14 @@ export class Capture {
   private sessionId = '';
   private uploadAbort = new AbortController();
   private flushResolve?: () => void;
+  private resuming = false;
+  private silentSamples = 0;
+  private silenceReported = false;
+  private wakeLock?: WakeLockSentinel;
+  private requestingWakeLock = false;
+  private visibilityChanged = () => {
+    if (document.visibilityState === 'visible') void this.keepAwake();
+  };
   mime = '';
   sampleRate = 0;
   constructor(private options: CaptureOptions) { this.segmenter = new Segmenter(options.threshold); }
@@ -50,6 +59,7 @@ export class Capture {
         if (event.data === 'flushed') { this.flushResolve?.(); return; }
         if (!this.enabled) return;
         const input = event.data as Float32Array;
+        this.checkSilence(input);
         const blockStartedAt = performance.now() - input.length / this.sampleRate * 1000;
         const pcm = this.resampler!.push(input);
         const turn = this.segmenter.push(pcm);
@@ -59,7 +69,7 @@ export class Capture {
           speechStartedAt: turn.begin ? blockStartedAt : undefined });
       };
       // Verify browser audio permission before opening a paid upstream session.
-      if (!await within(this.context.resume(), 2500) || this.context.state !== 'running') {
+      if (!await within(this.context.resume(), 2500) || String(this.context.state) !== 'running') {
         throw new Error('Chrome blocked audio startup. Click Start session on this page to allow recording, then retry the shortcut.');
       }
       this.source = this.context.createMediaStreamSource(this.stream);
@@ -67,6 +77,10 @@ export class Capture {
       this.stream.getTracks().forEach(track => track.addEventListener('ended', () => {
         if (!this.stopped) this.options.onFatal('Microphone disconnected. Capture stopped; final text may be incomplete.');
       }));
+      this.stream.getTracks().forEach(track => track.addEventListener('mute', () => {
+        if (this.enabled && !this.stopped) this.interruption('Microphone input interrupted. Both the recording and captions may contain a gap. Check the microphone connection and keep the computer awake.');
+      }));
+      this.context.onstatechange = () => { void this.recoverContext(); };
     } catch (e) { await this.dispose(); throw e; }
   }
   async start(sessionId: string) {
@@ -77,10 +91,56 @@ export class Capture {
     this.recorder.onerror = () => { this.recordingFailed = true; this.options.onWarning('Recording encoder failed. Captions can continue; audio will remain incomplete.'); };
     if (!await within(this.context.resume(), 2500) || this.context.state !== 'running') throw new Error('Chrome blocked audio startup. Click Start session to retry.');
     this.enabled = true;
+    if (this.stream.getTracks().some(track => track.muted)) this.interruption('Microphone input is muted by the browser or operating system. Recording and captions may be missing audio. Check the microphone connection.');
     this.recorder.start(1000);
     this.source.connect(this.node);
     // Worklet outputs zeros; no captured audio is played.
     this.node.connect(this.context.destination);
+    document.addEventListener('visibilitychange', this.visibilityChanged);
+    void this.keepAwake();
+  }
+  private async keepAwake() {
+    if (this.stopped || !this.enabled || this.wakeLock || this.requestingWakeLock || document.visibilityState !== 'visible') return;
+    if (!navigator.wakeLock) {
+      this.interruption('Automatic sleep prevention is unavailable. Keep the computer awake manually during recording.'); return;
+    }
+    this.requestingWakeLock = true;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      if (this.stopped) { await lock.release(); return; }
+      this.wakeLock = lock;
+      lock.addEventListener('release', () => {
+        if (this.wakeLock === lock) this.wakeLock = undefined;
+        if (!this.stopped) this.interruption('Sleep prevention was released. Keep ClearScribe visible and the computer awake to avoid recording gaps.');
+      });
+    } catch {
+      if (!this.stopped) this.interruption('Could not prevent automatic sleep. Keep the computer awake manually during recording.');
+    } finally { this.requestingWakeLock = false; }
+  }
+  private interruption(message: string) {
+    (this.options.onInterruption || this.options.onWarning)(message);
+  }
+  private checkSilence(input: Float32Array) {
+    if (input.some(sample => sample !== 0)) {
+      this.silentSamples = 0; this.silenceReported = false; return;
+    }
+    this.silentSamples += input.length;
+    if (!this.silenceReported && this.silentSamples >= this.sampleRate * 10) {
+      this.silenceReported = true;
+      this.interruption('Microphone has supplied digital silence for 10 seconds. Both recording and captions may be missing audio. Check the input device, microphone level, and noise suppression or echo cancellation settings.');
+    }
+  }
+  private async recoverContext() {
+    if (!this.enabled || this.stopped || !this.context || this.context.state === 'running' || this.resuming) return;
+    this.resuming = true;
+    this.interruption('Browser audio processing was interrupted. Captions may contain a gap; the original recording may also be affected. Attempting to resume.');
+    try {
+      if (!await within(this.context.resume(), 2500) || String(this.context.state) !== 'running') {
+        this.interruption('Browser audio could not resume. Stop and start a new session to restore captions; check the recording for gaps.');
+      }
+    } catch {
+      this.interruption('Browser audio could not resume. Stop and start a new session to restore captions; check the recording for gaps.');
+    } finally { this.resuming = false; }
   }
   private enqueue(blob: Blob) {
     if (!blob.size || this.recordingFailed) return;
@@ -140,6 +200,9 @@ export class Capture {
     return !this.recordingFailed;
   }
   async dispose() {
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.visibilityChanged);
+    const lock = this.wakeLock; this.wakeLock = undefined;
+    if (lock) await lock.release().catch(() => {});
     this.source?.disconnect(); this.node?.disconnect(); this.stream?.getTracks().forEach(t => t.stop());
     if (this.context && this.context.state !== 'closed') await this.context.close();
   }

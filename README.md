@@ -161,6 +161,10 @@ The caption footer shows **First caption: ~N ms** for the latest segment whose f
 
 Automatic gain is on; noise suppression and echo cancellation default off because the phone speaker is wanted input. Adjust these in **Fine-tune recognition** using your actual setup. The energy gate defaults to 0.008 normalized RMS, with 300 ms pre-roll, 850 ms end silence and a 25-second maximum turn. A low-volume phone may require a lower threshold or closer placement. This gate is a simple, tunable heuristic; background sound may trigger false speech.
 
+During recording, ClearScribe requests a browser screen wake lock to prevent idle screen sleep and automatic locking. Keep the ClearScribe tab visible: browsers release this lock when the page is hidden, and ClearScribe requests it again when you return. Stop releases the lock. A warning appears if the request fails, is unsupported, or the lock is released. This cannot override manual locking, closing the lid, explicit sleep, or operating-system policies. Audio during computer sleep cannot be recovered.
+
+Temporary microphone muting, interrupted browser audio processing, and ten seconds of exact digital silence now produce warnings. Interrupted audio processing triggers a bounded resume attempt. Natural quiet is not proof of a failure, and these checks cannot detect every missing sound. Check the microphone meter before continuing after an interruption; stop and start a new session if capture does not recover. Both original audio and captions use the same microphone stream, so a source interruption or aggressive browser audio processing can affect both; the caption energy gate does not remove audio from the original recording.
+
 ## Your session files
 
 Each completed session normally produces three files in the same folder with the same basename. TXT and original audio are written during capture; MP3 is generated asynchronously after the original audio has been finalized:
