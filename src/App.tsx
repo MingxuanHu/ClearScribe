@@ -136,7 +136,10 @@ export function App() {
   }, []);
   useEffect(() => { if (following && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight; }, [segments, following]);
   useLayoutEffect(() => {
-    const latest = captionTiming.current.rendered(segments, performance.now());
+    const latest = captionTiming.current.rendered(segments, performance.now(), (segment, ms) => {
+      send({ type: 'captionTiming', seq: segment.seq, ms });
+      setSegments(previous => previous.map(s => s.seq === segment.seq ? { ...s, firstCaptionMs: ms } : s));
+    });
     if (latest !== undefined) setCaptionDelay(latest);
   }, [segments]);
   function send(value: object) {
@@ -228,7 +231,7 @@ export function App() {
           startDate.current = new Date().toString();
           void mic.start(data.sessionId).then(() => changePhase('Listening')).catch(() => { setMessage('Microphone could not start. Retry after checking browser permissions.'); void stop(); });
         } else if (data.type === 'segment') {
-          setSegments(previous => [...previous.filter(s => s.seq !== data.segment.seq), data.segment].sort((a, b) => a.seq - b.seq));
+          setSegments(previous => [...previous.filter(s => s.seq !== data.segment.seq), { ...data.segment, firstCaptionMs: data.segment.firstCaptionMs ?? previous.find(s => s.seq === data.segment.seq)?.firstCaptionMs }].sort((a, b) => a.seq - b.seq));
         } else if (data.type === 'saved') setFiles(data.files);
         else if (data.type === 'switched') {
           setCurrentModel(data.model); setPendingModel(''); pending.current = ''; switching.current = false;

@@ -13,16 +13,18 @@ export class CaptionDelay {
     this.pending.set(startSample, speechStartedAt);
   }
 
-  rendered(segments: readonly Segment[], now: number): number | undefined {
+  rendered(segments: readonly Segment[], now: number, record?: (segment: Segment, ms: number) => void): number | undefined {
     let delay: number | undefined;
     for (const segment of segments) {
       const started = this.pending.get(segment.startSample);
       if (started === undefined || !segment.text.trim()) continue;
       this.pending.delete(segment.startSample);
+      const measured = Math.max(0, Math.round(now - started));
+      record?.(segment, measured);
       // Late results for older segments must not replace the latest measurement.
       if (segment.startSample <= this.latestStart) continue;
       this.latestStart = segment.startSample;
-      delay = Math.max(0, Math.round(now - started));
+      delay = measured;
     }
     return delay;
   }

@@ -130,6 +130,13 @@ export class CallSession {
     try { await this.connect(model); if (this.phase !== 'switching') return; this.phase = 'listening'; this.send('switched', { model }); }
     catch { this.fault('Model switch failed. Transcription stopped; existing text and the same recording files are retained.'); }
   }
+  captionTiming(seq: unknown, ms: unknown) {
+    if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || typeof ms !== 'number' || !Number.isSafeInteger(ms) || ms < 0) throw new Error('Invalid caption timing');
+    const segment = this.transcript.segments.find(s => s.seq === seq);
+    if (!segment || !segment.text.trim() || segment.firstCaptionMs !== undefined) return;
+    segment.firstCaptionMs = ms;
+    void this.persist();
+  }
   async persist() {
     try { await this.files.saveText(transcriptText(this.transcript.segments, this.started.toString(), this.notices)); this.send('saved', { files: this.files.info() }); }
     catch (e) { if (!this.savedWarning) { this.savedWarning = true; this.send('warning', { message: safeError(e) }); } }
