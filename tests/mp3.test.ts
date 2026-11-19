@@ -119,3 +119,32 @@ test('filesystems without hard links publish by reservation and never replace ex
     assert.equal(await readFile(output, 'utf8'), 'complete MP3');
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
+
+
+test('deletion cancels queued and in-flight MP3 work without leaving retry intents or temporary output', async () => {
+  const f = await fixture();
+  let began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  let calls = 0;
+  const queue = new Mp3Queue(f.jobs, f.project, () => false, async (_source, output, signal) => {
+    calls++;
+    await writeFile(output, 'temporary encoding'); began();
+    await new Promise<void>((_resolve, reject) => {
+      if (signal.aborted) { reject(new Error('Cancelled')); return; }
+      signal.addEventListener('abort', () => reject(new Error('Cancelled')), { once: true });
+    });
+  });
+  try {
+    await f.files.appendAudio(Buffer.from('synthetic audio'), 0); await f.files.finish(true);
+    await queue.track(f.files);
+    await queue.cancelRecording(f.folder, f.files.base);
+    await queue.drain(); assert.equal(calls, 0); assert.deepEqual(await readdir(f.jobs), []);
+    await queue.track(f.files);
+    const draining = queue.drain(); await started;
+    await queue.cancelRecording(f.folder, f.files.base); await draining;
+    assert.equal(calls, 1); assert.deepEqual(await readdir(f.jobs), []);
+    assert.equal((await readdir(f.folder)).some(name => name.endsWith('.tmp') || name.endsWith('.mp3')), false);
+    assert.equal(await readFile(f.files.file('webm'), 'utf8'), 'synthetic audio');
+    await queue.drain(); assert.equal(calls, 1);
+  } finally { await queue.close(); await rm(f.root, { recursive: true, force: true }); }
+});

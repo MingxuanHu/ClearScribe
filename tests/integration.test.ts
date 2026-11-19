@@ -85,9 +85,18 @@ test('Stop commits last speech, waits for final and makes exactly two output fil
     await f.audio(ready.sessionId); assert.equal((await f.recording(ready.sessionId)).status, 200);
     assert.equal((await f.api('/api/folder/open', { method: 'POST' })).status, 200);
     assert.deepEqual(f.openedFolders, [f.folder]);
+    const folderId = (await (await f.api('/api/bootstrap')).json() as any).folder.id;
+    const libraryBase = '/api/library?folderId=' + encodeURIComponent(folderId);
+    const liveItem = (await (await f.api(libraryBase)).json() as any).items[0];
+    assert.equal(liveItem.active, true);
+    assert.equal((await f.api(libraryBase + '&id=' + encodeURIComponent(liveItem.id), { method: 'DELETE' })).status, 409);
+    assert.equal((await f.api(`/api/library/file?folderId=${encodeURIComponent(folderId)}&id=${encodeURIComponent(liveItem.id)}&extension=txt`)).status, 409);
+
     f.send({ type: 'stop', sessionId: ready.sessionId, audioComplete: true });
     const stopped = await f.wait('stopped'); assert.equal(stopped.segments[0].text, 'Synthetic final 1.1.');
     assert.equal(stopped.files.audioSaved, true); assert.equal(stopped.files.txtSaved, true);
+    const review = await (await f.api(libraryBase + '&id=' + encodeURIComponent(stopped.files.base))).json() as any;
+    assert.equal(review.active, false); assert.match(review.transcript, /Synthetic final 1.1/);
     assert.equal(f.events.filter(e => e.type === 'input_audio_buffer.commit').length, 1);
     assert.equal((await readdir(f.folder)).length, 2);
     const index = f.inbox.length; f.start(); const second = await f.wait('ready', index);
@@ -114,7 +123,8 @@ test('new sessions register durable jobs and generate an extra MP3 without conve
     const stopped = await f.wait('stopped');
     assert.equal(stopped.files.audioSaved, true);
     const deadline = Date.now() + 5000;
-    while (!(await readdir(f.folder)).includes(`${stopped.files.base}.mp3`) && Date.now() < deadline) {
+    // Publication precedes temporary-file and durable-job cleanup. Wait for both.
+    while ((!(await readdir(f.folder)).includes(`${stopped.files.base}.mp3`) || (await readdir(jobs)).length > 0 || (await readdir(f.folder)).some(name => name.endsWith('.tmp'))) && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     assert.deepEqual((await readdir(f.folder)).sort(), ['txt', 'webm', 'mp3'].map(ext => `${stopped.files.base}.${ext}`).sort());

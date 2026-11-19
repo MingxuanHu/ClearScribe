@@ -59,3 +59,18 @@ These are manual acceptance checks; automated mocks do not establish actual brow
 - [ ] With no selected folder, confirm the open-folder button is disabled. Choose a folder and verify **Open in Finder** on macOS or **Open in File Explorer** on Windows opens that exact folder without a selection dialog.
 - [ ] Open the folder while recording and after Stop. Verify capture continues normally and saved folder/preferences remain unchanged. **Change save folder** must continue to open the existing selection dialog when idle.
 - [ ] Remove/disconnect the save folder and click Open. Confirm a useful error appears, the saved path is preserved, and reconnecting the drive allows a later retry.
+
+## Conversation library and extension compatibility
+
+- Open with existing timestamp-named TXT, original audio, and MP3 files: verify one library entry per conversation and no original files renamed. Switch folders and confirm only that folder is listed.
+- Search a distinctive transcript phrase and your own title/description; test sort order, no results, Refresh, and pagination beyond 50 sessions.
+- Rename a conversation, add a description, save, reload, and restart the backend. Confirm both persist and the TXT/audio contents are unchanged. Try an unwritable or disconnected drive; verify an honest error and retained edits.
+- Review an older session, play each supported format, seek using transcript times, and download the TXT, MP3, and original. Check large transcripts, provisional markers, missing formats, corrupt metadata, and `.part` recordings.
+- Start a real recording from the library: verify the familiar live captions remain readable, Stop waits for finalization, and review opens for the correct session. Name it, return to the list, and start another.
+- Reload the unpacked Chrome extension and refresh the app page. Trigger Quick Start from the library and from review; confirm it opens the live workspace and starts exactly one recording. Repeat during connection, recording, and finishing without replacing the call. Verify missing setup shows in the recording workspace.
+- With unsaved review edits, trigger Quick Start: cancel to retain the edits and avoid capture; accept to open recording. Loading or refreshing the normal URL must only open the library, never start capture.
+- Check desktop and narrow layouts and keyboard navigation. Real Chrome microphone, extension installation, and audio quality checks remain manual unless explicitly recorded as executed.
+
+### Delete a conversation
+
+Use disposable recordings for this check. Click a title to confirm review still opens. The right-side trash icon must open a dialog naming the selected conversation and warning that deletion is permanent. Cancel or press Escape and confirm no files change. Confirm deletion and verify TXT, every audio format, `.part` files, known conversion leftovers, and the title/description companion file are removed while neighboring recordings remain. Check deletion with MP3 conversion pending and running; the MP3 must not reappear after waiting or restarting the backend. Confirm deletion is disabled for an active recording and errors are visible for an unavailable or unwritable drive.

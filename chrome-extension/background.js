@@ -14,12 +14,12 @@ async function launch() {
     else tab = await chrome.tabs.create({ url: target, active: true });
     await chrome.windows.update(tab.windowId, { focused: true });
     // New tabs may not yet have their content script. A single acknowledged request
-    // queues the start until the app's settings and model list are ready.
+    // opens the recording workspace from library/review and queues the start until the app's settings and model list are ready.
     const requestId = crypto.randomUUID();
     let delivered = false;
     for (let i = 0; i < 40; i++) {
       try {
-        const response = await chrome.tabs.sendMessage(tab.id, { type: 'clearscribe-start', requestId });
+        const response = await chrome.tabs.sendMessage(tab.id, { type: 'clearscribe-start', requestId, destination: 'recording' });
         if (response?.accepted) { delivered = true; break; }
       } catch { /* Wait for navigation and content script injection. */ }
       await pause(250);

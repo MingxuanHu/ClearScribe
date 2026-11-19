@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ClearScribe Quick Start",
-  "version": "0.1.0",
-  "description": "Open your local ClearScribe page and start recording with a global keyboard shortcut.",
+  "version": "0.2.0",
+  "description": "Open the ClearScribe recording workspace from your library or review screen and start recording.",
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": { "service_worker": "background.js", "type": "module" },
