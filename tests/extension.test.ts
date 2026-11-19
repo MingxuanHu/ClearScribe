@@ -40,6 +40,7 @@ test('shortcut creates a missing tab, focuses window, waits for content script; 
     assert.equal(calls.filter(c => c[0] === 'update').length, existing ? 1 : 0);
     assert.equal(calls.filter(c => c[0] === 'focus').length, 1);
     assert.equal(deliveries, 2);
+    assert.equal(calls.find(c => c[0] === 'send')[2].destination, 'recording');
     assert.equal(calls.find(c => c[0] === 'send')[2].requestId, calls.filter(c => c[0] === 'send')[1][2].requestId);
   }
 });
@@ -62,7 +63,7 @@ test('content bridge waits for app readiness, checks sender/origin and acknowled
   const message = { type: 'clearscribe-start', requestId: 'request-1' };
   listener(message, { id: 'other-extension' }, (value: any) => replies.push(value)); assert.equal(sent.length, 0);
   assert.equal(listener(message, { id: 'test-extension' }, (value: any) => replies.push(value)), true);
-  retry(); assert.equal(sent.length, 2); assert.equal(replies.length, 0);
+  retry(); assert.equal(sent[0][0].destination, 'recording'); assert.equal(sent.length, 2); assert.equal(replies.length, 0);
   const ack = { source: window, origin: 'http://127.0.0.1:4317', data: { type: 'clearscribe-start-ack', requestId: 'request-1' } };
   receive({ ...ack, origin: 'https://example.com' }); assert.equal(replies.length, 0);
   receive(ack); assert.equal(replies[0].accepted, true);

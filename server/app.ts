@@ -12,6 +12,7 @@ import { DEFAULT_PREFERENCES, parsePreferencePatch } from '../shared/preferences
 import { CallSession, ConnectionError, type UpstreamFactory } from './session.js';
 import { Mp3Queue } from './mp3.js';
 import { openFolder } from './folder.js';
+import { listConversations, conversationDetail, saveConversation, openConversationFile, validConversationId, deleteConversation } from './library.js';
 export interface AppOptions { settingsFile?: string; port: number; devPort?: number; project: string; key: string; picker?: typeof chooseFolder; openFolder?: typeof openFolder; upstream?: UpstreamFactory; request?: typeof fetch }
 export function createApp(options: AppOptions) {
   const token = randomBytes(32).toString('hex');
@@ -47,6 +48,8 @@ export function createApp(options: AppOptions) {
   let owner: WebSocket | undefined;
   let lastFiles: CallFiles | undefined;
   let starting = false;
+  let libraryDeleting = false;
+  let libraryWrites = 0;
   const mp3 = options.settingsFile ? new Mp3Queue(path.join(path.dirname(options.settingsFile), 'mp3-jobs'), options.project,
     () => starting || !!active && active.phase !== 'stopped') : undefined;
   const ws = new WebSocketServer({ noServer: true, maxPayload: 65536, perMessageDeflate: false });
@@ -70,6 +73,86 @@ export function createApp(options: AppOptions) {
       }
       if (url.pathname.startsWith('/api/')) {
         if (!authenticated(req) || (req.method !== 'GET' && !equal(String(req.headers['x-csrf-token'] || ''), token))) { json(res, 403, { error: 'Reload the local app to establish a trusted session.' }); return; }
+        if (url.pathname === '/api/library' || url.pathname === '/api/library/file') {
+          if (!folder || url.searchParams.get('folderId') !== folder.id) { json(res, 409, { error: 'The save folder changed or is unavailable. Refresh the library.' }); return; }
+          const selected = folder;
+          const id = url.searchParams.get('id');
+          if (id !== null && !validConversationId(id)) { json(res, 400, { error: 'Invalid conversation ID.' }); return; }
+          const activeBase = active && active.phase !== 'stopped' ? active.files.base : undefined;
+          if (url.pathname === '/api/library/file' && (req.method === 'GET' || req.method === 'HEAD')) {
+            const extension = url.searchParams.get('extension') || '';
+            if (!id || !['txt', 'mp3', 'webm', 'm4a', 'ogg'].includes(extension) || id === activeBase) { json(res, 409, { error: 'Choose a finalized conversation file.' }); return; }
+            const { handle, info } = await openConversationFile(selected.path, id, extension);
+            let start = 0, end = info.size - 1, partial = false;
+            if (req.headers.range) {
+              const match = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+              if (match && (match[1] || match[2])) {
+                start = match[1] ? Number(match[1]) : Math.max(0, info.size - Number(match[2]));
+                end = match[1] && match[2] ? Math.min(Number(match[2]), end) : end;
+              }
+              if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= info.size) {
+                await handle.close(); res.writeHead(416, { 'Content-Range': `bytes */${info.size}` }); res.end(); return;
+              }
+              partial = true;
+            }
+            const types: Record<string, string> = { txt: 'text/plain; charset=utf-8', mp3: 'audio/mpeg', webm: 'audio/webm', m4a: 'audio/mp4', ogg: 'audio/ogg' };
+            res.setHeader('Content-Type', types[extension]); res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', Math.max(0, end - start + 1));
+            res.setHeader('Content-Disposition', `${url.searchParams.get('download') === '1' ? 'attachment' : 'inline'}; filename="${id}.${extension}"`);
+            if (partial) res.setHeader('Content-Range', `bytes ${start}-${end}/${info.size}`);
+            res.statusCode = partial ? 206 : 200;
+            if (req.method === 'HEAD' || !info.size) { await handle.close(); res.end(); return; }
+            const stream = handle.createReadStream({ start, end });
+            stream.on('error', () => res.destroy()); res.on('close', () => stream.destroy()); stream.pipe(res); return;
+          }
+          if (url.pathname !== '/api/library') { json(res, 405, { error: 'Unsupported library action.' }); return; }
+          let items = await listConversations(selected.path, activeBase);
+          if (id) {
+            const item = items.find(item => item.id === id);
+            if (!item) { json(res, 404, { error: 'Conversation files are no longer in this folder.' }); return; }
+            if (req.method === 'POST') {
+              if (libraryDeleting) { json(res, 409, { error: 'Wait for deletion to finish.' }); return; }
+              libraryWrites++;
+              try {
+                const value: unknown = JSON.parse((await readBody(req, 32 * 1024)).toString('utf8'));
+                const metadata = await saveConversation(selected.path, id, value);
+                json(res, 200, { ...item, ...metadata });
+              } finally { libraryWrites--; }
+              return;
+            }
+            if (req.method === 'DELETE') {
+              if (libraryDeleting || libraryWrites > 0 || picking || starting || (active && active.phase !== 'stopped' && active.files.folder === selected.path && active.files.base === id)) {
+                json(res, 409, { error: 'Finish the active recording or folder action before deleting this conversation.' }); return;
+              }
+              libraryDeleting = true;
+              try {
+                await mp3?.cancelRecording(selected.path, id);
+                const deleted = await deleteConversation(selected.path, id);
+                if (lastFiles?.folder === selected.path && lastFiles.base === id) lastFiles = undefined;
+                if (active?.phase === 'stopped' && active.files.folder === selected.path && active.files.base === id) active = undefined;
+                json(res, 200, { deleted });
+              } catch {
+                json(res, 507, { error: 'Could not delete all conversation files. Some files may already have been deleted. Check folder permissions and the recording drive, then retry.' });
+              } finally { libraryDeleting = false; }
+              return;
+            }
+            if (req.method === 'GET') { json(res, 200, await conversationDetail(selected.path, item)); return; }
+          } else if (req.method === 'GET') {
+            const query = (url.searchParams.get('q') || '').trim().toLowerCase().slice(0, 500);
+            if (query) {
+              const matches = [];
+              for (const item of items) {
+                if (`${item.title} ${item.description}`.toLowerCase().includes(query) || (await conversationDetail(selected.path, item)).transcript.toLowerCase().includes(query)) matches.push(item);
+              }
+              items = matches;
+            }
+            const sort = url.searchParams.get('sort');
+            items.sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title) || b.id.localeCompare(a.id) : sort === 'oldest' ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id));
+            const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+            json(res, 200, { items: items.slice(offset, offset + 50), total: items.length, folderId: selected.id }); return;
+          }
+          json(res, 405, { error: 'Unsupported library action.' }); return;
+        }
         if (url.pathname === '/api/preferences' && req.method === 'POST') {
           const patch = parsePreferencePatch(JSON.parse((await readBody(req, 48 * 1024)).toString('utf8')));
           try {
@@ -99,7 +182,7 @@ export function createApp(options: AppOptions) {
           return;
         }
         if (url.pathname === '/api/folder' && req.method === 'POST') {
-          if (starting || picking || openingFolder || (active && active.phase !== 'stopped')) { json(res, 409, { error: 'Finish the current call or folder action first.' }); return; }
+          if (libraryDeleting || starting || picking || openingFolder || (active && active.phase !== 'stopped')) { json(res, 409, { error: 'Finish the current call or folder action first.' }); return; }
           picking = true;
           try {
             const selected = await (options.picker || chooseFolder)();
@@ -173,7 +256,7 @@ export function createApp(options: AppOptions) {
       try { m = JSON.parse(raw.toString()); if (!m || typeof m.type !== 'string') throw new Error('Invalid message'); }
       catch { client.close(1008, 'Invalid message'); return; }
       if (m.type === 'start') {
-        if (starting || (active && active.phase !== 'stopped')) { sendError('A call is already active.'); return; }
+        if (libraryDeleting || starting || (active && active.phase !== 'stopped')) { sendError('A call or file deletion is already active.'); return; }
         if (!options.key) { sendError('Set OPENAI_API_KEY in .env and restart the backend.'); return; }
         if (!folder || m.folderId !== folder.id || !compatible(m.model) || !MIME_EXTENSIONS[m.mime]) { sendError('Choose a valid external folder, supported recording format, and compatible model.'); return; }
         let settings;

@@ -7,7 +7,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     clearInterval(retry); clearTimeout(timeout); window.removeEventListener('message', receive);
     reply({ accepted: true });
   };
-  const send = () => window.postMessage({ type: 'clearscribe-start', requestId }, location.origin);
+  const send = () => window.postMessage({ type: 'clearscribe-start', requestId, destination: 'recording' }, location.origin);
   window.addEventListener('message', receive);
   const retry = setInterval(send, 200);
   const timeout = setTimeout(() => {

@@ -1,15 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Capture } from './capture';
 import { CaptionDelay, delaySeverity } from './caption-delay';
 import { timestamp, transcriptText, type Segment } from '../shared/transcript';
 import type { ModelList } from '../server/models';
 import { DEFAULT_PREFERENCES, parsePreferencePatch, type Preferences } from '../shared/preferences';
 import { PreferenceSaver } from './preferences';
+import { Library } from './Library';
 type Phase = 'Idle' | 'Connecting' | 'Listening' | 'Switching' | 'Stopping' | 'Stopped' | 'Error';
 interface Files { base: string; extension: string; audioSaved: boolean; txtSaved: boolean; audioFailed: boolean; txtFailed: boolean; bytes: number }
 interface Bootstrap { token: string; keyConfigured: boolean; folder?: { id: string; path: string }; files?: Files; active: boolean; platform: string; settingsWarning?: string; preferences: Preferences; preferencesSaved: boolean }
 export function App() {
   const preview = import.meta.env.DEV && new URLSearchParams(location.search).get('preview') === '1';
+  const [view, setView] = useState<'library' | 'recording'>(preview ? 'recording' : 'library');
+  const [reviewId, setReviewId] = useState<string>();
+  const libraryDirty = useRef(false);
+  const onLibraryDirty = useCallback((dirty: boolean) => { libraryDirty.current = dirty; }, []);
+  const shortcutIds = useRef(new Set<string>());
   const [shortcutRequested, setShortcutRequested] = useState(false);
   const [boot, setBoot] = useState<Bootstrap>();
   const [catalog, setCatalog] = useState<ModelList>();
@@ -114,7 +120,7 @@ export function App() {
       if (legacyModel) preferenceSaver.current.enqueue({ model: legacyModel });
       setBoot(b); if (b.settingsWarning) setWarning(b.settingsWarning); if (b.files) setFiles(b.files);
       const r = await fetch('/api/models'); const models = await r.json(); if (disposed) return; setCatalog(models);
-      if (b.files) {
+      if (b.active && b.files) {
         const restored = await fetch('/api/files').then(r => r.json());
         if (disposed) return;
         if (restored.segments) setSegments(restored.segments);
@@ -180,6 +186,11 @@ export function App() {
     const receive = (event: MessageEvent) => {
       if (preview || event.source !== window || event.origin !== location.origin || event.data?.type !== 'clearscribe-start' || typeof event.data.requestId !== 'string') return;
       window.postMessage({ type: 'clearscribe-start-ack', requestId: event.data.requestId }, location.origin);
+      if (shortcutIds.current.has(event.data.requestId)) return;
+      shortcutIds.current.add(event.data.requestId);
+      if (shortcutIds.current.size > 64) shortcutIds.current.delete(shortcutIds.current.values().next().value!);
+      if (libraryDirty.current && !window.confirm('Discard the unsaved title and description and start a recording?')) return;
+      setReviewId(undefined); setView('recording');
       setShortcutRequested(true);
     };
     window.addEventListener('message', receive);
@@ -198,6 +209,7 @@ export function App() {
   });
   async function start() {
     if (['Connecting', 'Listening', 'Switching', 'Stopping'].includes(phaseRef.current) || !boot || !boot.keyConfigured || !boot.folder || !catalog?.models.some(m => m.id === model)) return;
+    setView('recording');
     const thisAttempt = ++attempt.current;
     stopping.current = false; switching.current = false; speaking.current = false; pending.current = '';
     queued.current = []; queuedBytes.current = 0; sessionId.current = ''; notes.current = [];
@@ -247,7 +259,7 @@ export function App() {
         else if (data.type === 'stopped') {
           clearTimeout(connectionTimer); clearTimeout(finishTimer.current); setFiles(data.files); setSegments(data.segments);
           setLevel(0); setPendingModel(''); pending.current = '';
-          void mic.stop().finally(() => { if (socket.current === connection) { changePhase('Stopped'); connection.close(); } });
+          void mic.stop().finally(() => { if (socket.current === connection) { changePhase('Stopped'); setReviewId(data.files.base); setView('library'); connection.close(); } });
         }
       };
       connection.onclose = () => {
@@ -282,7 +294,7 @@ export function App() {
   }
   async function pickFolder() {
     setBusy(true); setMessage('');
-    try { const response = await api('/api/folder', { method: 'POST' }); setBoot(b => b && { ...b, folder: response.folder }); }
+    try { const response = await api('/api/folder', { method: 'POST' }); setBoot(b => b && { ...b, folder: response.folder }); if (!response.cancelled) setReviewId(undefined); }
     catch (e) { setMessage((e as Error).message); } finally { setBusy(false); }
   }
   async function openSaveFolder() {
@@ -301,8 +313,12 @@ export function App() {
   const folderOpenLabel = boot?.platform === 'darwin' ? 'Open in Finder' : boot?.platform === 'win32' ? 'Open in File Explorer' : 'Open folder';
   const canStart = !!boot?.keyConfigured && !!boot.folder && !selectedMissing && !!catalog?.models.length && !busy;
   const finalized = segments.filter(s => s.final && s.text).length;
+  if (view === 'library' && !active) return <Library key={boot?.folder?.id || 'loading'} token={boot?.token} folder={boot?.folder} platform={boot?.platform} initialId={reviewId}
+    onDirtyChange={onLibraryDirty} message={message || warning} busy={busy || openingFolder} onNew={() => { setReviewId(undefined); setSegments([]); setFiles(undefined); setSamples(0); setCaptionDelay(undefined); setMessage(''); setWarning(''); setView('recording'); }}
+    onFolder={() => void pickFolder()} onOpenFolder={() => void openSaveFolder()}/>;
   return <main className="shell">
-    <header className="masthead"><a className="brand" href="/" aria-label="ClearScribe home"><span className="brandmark" aria-hidden="true">≋</span> ClearScribe<span className="local-tag">LOCAL WORKSPACE</span></a><span className="privacy"><span className="tiny-dot"/> Your microphone. Your workspace.</span></header>
+    <header className="masthead"><button className="brand library-brand" onClick={() => { setReviewId(undefined); setView('library'); }} disabled={active} aria-label="ClearScribe library"><span className="brandmark" aria-hidden="true">≋</span> ClearScribe<span className="local-tag">LOCAL WORKSPACE</span></button><span className="privacy"><span className="tiny-dot"/> Your microphone. Your workspace.</span></header>
+    {!active && !preview && <button className="text-button library-back" onClick={() => { setReviewId(undefined); setView('library'); }}>← Conversation library</button>}
     <section className="intro"><div><p className="eyebrow">A LITTLE CLARITY FOR EVERY CONVERSATION</p><h1>Stay in the conversation.</h1><p className="subtitle">Live English captions, no AI replies.</p></div><div className="intro-note"><span className="note-icon">↗</span><p>Listen closely.<br/>Read clearly.<br/><strong>Respond as yourself.</strong></p></div></section>
     <div className="preview-banner" hidden={!preview}>SYNTHETIC LAYOUT PREVIEW · no microphone or OpenAI session</div>
     <div className="workspace">

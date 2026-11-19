@@ -59,6 +59,8 @@ export class Mp3Queue {
   private timer?: ReturnType<typeof setTimeout>;
   private running?: Promise<void>;
   private stopped = false;
+  private cancelled = new Set<string>();
+  private inFlight?: { id: string; abort: AbortController; finished: Promise<void> };
   private abort = new AbortController();
   private ready: Promise<void>;
   constructor(private directory: string, private project: string, private busy = () => false,
@@ -112,6 +114,18 @@ export class Mp3Queue {
       catch { console.error('ClearScribe: incomplete recording intent cleanup will be retried.'); }
     }
   }
+  /** Stop publication before a user deletes a recording and remove its durable intents. */
+  async cancelRecording(folder: string, base: string) {
+    await this.ready;
+    const matches = [...this.jobs.values()].filter(job => path.dirname(job.source) === folder && path.basename(job.source, path.extname(job.source)) === base);
+    for (const job of matches) this.cancelled.add(job.id);
+    const current = this.inFlight;
+    if (current && this.cancelled.has(current.id)) { current.abort.abort(); await current.finished; }
+    for (const job of matches) {
+      await unlink(this.filename(job)).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      this.jobs.delete(job.id); this.cancelled.delete(job.id);
+    }
+  }
   /** Also exposed for deterministic recovery tests. Never awaited by session finalization. */
   async drain() {
     await this.ready;
@@ -130,7 +144,10 @@ export class Mp3Queue {
   private async process() {
     for (const job of this.jobs.values()) {
       if (this.stopped || this.busy()) break;
-      if (job.nextAttempt > this.now()) continue;
+      if (job.nextAttempt > this.now() || this.cancelled.has(job.id)) continue;
+      const abort = new AbortController();
+      let finished!: () => void;
+      this.inFlight = { id: job.id, abort, finished: new Promise<void>(resolve => { finished = resolve; }) };
       let temp: string | undefined;
       try {
         await this.persist(job);
@@ -157,22 +174,26 @@ export class Mp3Queue {
         // Reclaim only this job's temporary file after an interrupted conversion.
         await unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; });
         const handle = await open(temp, 'wx', 0o600); await handle.close();
-        await this.convert(job.source, temp, this.abort.signal);
-        if (this.stopped) throw new Error('Conversion interrupted');
+        await this.convert(job.source, temp, AbortSignal.any([this.abort.signal, abort.signal]));
+        if (this.stopped || this.cancelled.has(job.id)) throw new Error('Conversion interrupted');
         // Windows requires a writable handle for FlushFileBuffers/fsync.
         const finished = await open(temp, constants.O_RDWR | constants.O_NOFOLLOW);
         try { if (!(await finished.stat()).size) throw new Error('Empty MP3'); await finished.sync(); } finally { await finished.close(); }
+        if (this.cancelled.has(job.id)) throw new Error('Conversion interrupted');
         await publishMp3(temp, output, job.id);
         await this.remove(job);
       } catch (error) {
-        if (!this.stopped) {
+        if (!this.stopped && !this.cancelled.has(job.id)) {
           job.attempts++;
           job.nextAttempt = this.now() + [60000, 5 * 60000, 30 * 60000, 24 * 60 * 60000][Math.min(job.attempts - 1, 3)];
           try { await this.persist(job); } catch { /* Keep the in-memory job and its durable previous intent. */ }
           const reason = (error as NodeJS.ErrnoException).code || (error as Error).message;
           console.error(`ClearScribe: MP3 job ${job.id} deferred (${reason}); automatic retry is scheduled.`);
         }
-      } finally { if (temp) await unlink(temp).catch(() => {}); }
+      } finally {
+        if (temp) await unlink(temp).catch(() => {});
+        this.inFlight = undefined; finished();
+      }
     }
   }
   private async remove(job: Job) {
